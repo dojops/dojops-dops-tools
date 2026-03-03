@@ -1,0 +1,147 @@
+---
+dops: v2
+kind: tool
+
+meta:
+  name: datadog
+  version: 2.0.0
+  description: "Generate Datadog Agent integration configurations"
+  author: dojops
+  license: MIT
+  tags: [monitoring, datadog, apm, metrics, logging]
+
+context:
+  technology: Datadog
+  fileFormat: yaml
+  outputGuidance: |
+    Generate a valid Datadog Agent integration configuration in YAML format.
+    Output raw YAML content directly — do NOT wrap in JSON or code fences.
+    The output must be a valid Datadog Agent conf.d YAML file.
+  bestPractices:
+    - Define instances with specific hosts and ports for each check
+    - Use tags consistently for filtering and aggregation in dashboards
+    - Configure log collection with proper source and service tags
+    - Set min_collection_interval based on metric granularity needs
+    - Use autodiscovery templates for containerized environments
+    - Configure custom metrics with appropriate metric types (gauge, count, rate)
+    - Enable APM tracing integration when applicable
+  context7Libraries:
+    - name: datadog
+      query: "Datadog Agent configuration, integrations, custom checks, logs, APM, autodiscovery"
+
+files:
+  - path: "datadog/conf.d/custom-check.yaml"
+    format: raw
+
+detection:
+  paths: ["datadog/*.yaml", "datadog/conf.d/*.yaml"]
+  updateMode: true
+
+verification:
+  structural:
+    - path: "instances"
+      required: true
+      message: "Datadog check must have an 'instances' section"
+
+permissions:
+  filesystem: write
+  child_process: none
+  network: none
+
+scope:
+  write: ["datadog/*.yaml", "datadog/conf.d/*.yaml"]
+
+risk:
+  level: LOW
+  rationale: "Datadog config changes require Agent restart to take effect"
+
+execution:
+  mode: generate
+  deterministic: false
+  idempotent: true
+
+update:
+  strategy: replace
+  inputSource: file
+  injectAs: existingContent
+---
+# Datadog
+
+## Prompt
+
+You are a Datadog expert specializing in Agent integration and monitoring configuration.
+
+{outputGuidance}
+
+Follow these best practices:
+{bestPractices}
+
+{context7Docs}
+
+Project context: {projectContext}
+
+## Update Prompt
+
+You are a Datadog expert. Update the existing Datadog Agent configuration.
+Preserve existing instances and settings. Only add/modify what is requested.
+
+{outputGuidance}
+
+--- EXISTING CONFIGURATION ---
+{existingContent}
+--- END EXISTING CONFIGURATION ---
+
+## Examples
+
+Given: "Datadog integration for monitoring a PostgreSQL database"
+
+```yaml
+init_config:
+
+instances:
+  - host: localhost
+    port: 5432
+    username: datadog
+    password: "ENC[datadog_password]"
+    dbname: myapp
+    ssl: "require"
+    tags:
+      - "env:production"
+      - "service:myapp"
+      - "team:platform"
+    min_collection_interval: 15
+    collect_function_metrics: true
+    collect_count_metrics: true
+    collect_activity_metrics: true
+    collect_database_size_metrics: true
+    relations:
+      - relation_name: users
+        schemas:
+          - public
+      - relation_name: orders
+        schemas:
+          - public
+
+logs:
+  - type: file
+    path: /var/log/postgresql/postgresql-*.log
+    source: postgresql
+    service: myapp-db
+    log_processing_rules:
+      - type: multi_line
+        name: new_log_start
+        pattern: '\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}'
+```
+
+## Constraints
+
+- Never include plaintext passwords; use ENC[] or environment variables
+- Tag all instances with env, service, and team
+- Set min_collection_interval appropriate for the check type
+- Configure log collection with correct source for pipeline matching
+- Use SSL/TLS for all database and service connections
+
+## Keywords
+
+datadog, dd-agent, monitoring, apm, metrics, logging, traces,
+integration, check, dashboard, alert, slo

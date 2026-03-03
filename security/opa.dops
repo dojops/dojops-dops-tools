@@ -1,0 +1,146 @@
+---
+dops: v2
+kind: tool
+
+meta:
+  name: opa
+  version: 2.0.0
+  description: "Generate OPA Rego admission and authorization policies"
+  author: dojops
+  license: MIT
+  tags: [policy, opa, rego, authorization, admission]
+
+context:
+  technology: Open Policy Agent
+  fileFormat: raw
+  outputGuidance: |
+    Generate valid OPA Rego policy files.
+    Output raw Rego content directly — do NOT wrap in JSON or code fences.
+    The output must be valid Rego that `opa check` can validate.
+    Use the Rego v1 syntax with proper package declarations and rules.
+  bestPractices:
+    - Define a clear package hierarchy matching your policy domain
+    - Use deny rules with descriptive error messages
+    - Write helper rules for reusable policy logic
+    - Include default deny with explicit allow rules (deny-by-default)
+    - Add metadata annotations for documentation and IDE support
+    - Test policies with input mocking and opa test
+    - Use comprehensions and built-in functions for complex logic
+  context7Libraries:
+    - name: opa
+      query: "OPA Rego policy syntax, rules, packages, deny patterns, Kubernetes admission control"
+
+files:
+  - path: "policy.rego"
+    format: raw
+
+detection:
+  paths: ["*.rego", "policies/*.rego"]
+  updateMode: true
+
+verification:
+  binary:
+    command: "opa check policy.rego"
+    parser: generic-stderr
+    timeout: 30000
+    cwd: output
+
+permissions:
+  filesystem: write
+  child_process: required
+  network: none
+
+scope:
+  write: ["*.rego", "policies/*.rego"]
+
+risk:
+  level: LOW
+  rationale: "Policy files are declarative and require deployment to take effect"
+
+execution:
+  mode: generate
+  deterministic: false
+  idempotent: true
+
+update:
+  strategy: replace
+  inputSource: file
+  injectAs: existingContent
+---
+# OPA
+
+## Prompt
+
+You are an Open Policy Agent expert specializing in Rego policy authoring for Kubernetes admission control and authorization.
+
+{outputGuidance}
+
+Follow these best practices:
+{bestPractices}
+
+{context7Docs}
+
+Project context: {projectContext}
+
+## Update Prompt
+
+You are an OPA expert. Update the existing Rego policy.
+Preserve existing rules and package structure. Only add/modify what is requested.
+
+{outputGuidance}
+
+--- EXISTING CONFIGURATION ---
+{existingContent}
+--- END EXISTING CONFIGURATION ---
+
+## Examples
+
+Given: "Kubernetes admission policy that denies privileged containers and requires resource limits"
+
+```rego
+package kubernetes.admission
+
+import rego.v1
+
+deny contains msg if {
+    input.request.kind.kind == "Pod"
+    some container in input.request.object.spec.containers
+    container.securityContext.privileged == true
+    msg := sprintf("Privileged containers are not allowed: %s", [container.name])
+}
+
+deny contains msg if {
+    input.request.kind.kind == "Pod"
+    some container in input.request.object.spec.containers
+    not container.resources.limits.memory
+    msg := sprintf("Container %s must define memory limits", [container.name])
+}
+
+deny contains msg if {
+    input.request.kind.kind == "Pod"
+    some container in input.request.object.spec.containers
+    not container.resources.limits.cpu
+    msg := sprintf("Container %s must define CPU limits", [container.name])
+}
+
+deny contains msg if {
+    input.request.kind.kind == "Pod"
+    some container in input.request.object.spec.containers
+    container.image
+    not contains(container.image, ":")
+    msg := sprintf("Container %s must use a tagged image, not :latest", [container.name])
+}
+```
+
+## Constraints
+
+- Always declare a package for policy organization
+- Use deny rules that return descriptive error messages
+- Import rego.v1 for modern Rego syntax
+- Write rules that check specific fields, not broad object matches
+- Include comments explaining the policy intent
+
+## Keywords
+
+opa, rego, policy, admission, authorization, open-policy-agent,
+gatekeeper, kubernetes, rbac, compliance, governance

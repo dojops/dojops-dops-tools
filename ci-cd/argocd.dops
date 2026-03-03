@@ -1,0 +1,144 @@
+---
+dops: v2
+kind: tool
+
+meta:
+  name: argocd
+  version: 2.0.0
+  description: "Generate Argo CD GitOps application manifests"
+  author: dojops
+  license: MIT
+  tags: [gitops, argocd, kubernetes, cd, deployment]
+
+context:
+  technology: Argo CD
+  fileFormat: yaml
+  outputGuidance: |
+    Generate valid Argo CD Application YAML manifests.
+    Output raw YAML content directly — do NOT wrap in JSON or code fences.
+    The output must be valid Kubernetes-compatible YAML with Argo CD CRDs.
+    Use multi-document YAML (--- separator) when generating multiple resources.
+  bestPractices:
+    - Use Application or ApplicationSet CRDs for GitOps management
+    - Define sync policies with automated self-healing and pruning
+    - Use project isolation to restrict source repos and destinations
+    - Configure health checks and sync windows for controlled rollouts
+    - Use Helm or Kustomize for parameterized deployments
+    - Set retry strategies for transient sync failures
+    - Use finalizers to handle application deletion properly
+  context7Libraries:
+    - name: argocd
+      query: "Argo CD Application CRD, sync policy, project, ApplicationSet, health checks"
+
+files:
+  - path: "argocd/application.yaml"
+    format: raw
+
+detection:
+  paths: ["argocd/*.yaml", "argocd/*.yml"]
+  updateMode: true
+
+verification:
+  structural:
+    - path: "kind"
+      required: true
+      message: "Argo CD resource must have a kind"
+    - path: "apiVersion"
+      required: true
+      message: "Argo CD resource must have an apiVersion"
+
+permissions:
+  filesystem: write
+  child_process: none
+  network: none
+
+scope:
+  write: ["argocd/*.yaml"]
+
+risk:
+  level: LOW
+  rationale: "Argo CD manifests are declarative and require cluster apply"
+
+execution:
+  mode: generate
+  deterministic: false
+  idempotent: true
+
+update:
+  strategy: replace
+  inputSource: file
+  injectAs: existingContent
+---
+# Argo CD
+
+## Prompt
+
+You are a GitOps expert specializing in Argo CD application deployment.
+
+{outputGuidance}
+
+Follow these best practices:
+{bestPractices}
+
+{context7Docs}
+
+Project context: {projectContext}
+
+## Update Prompt
+
+You are an Argo CD expert. Update the existing Argo CD application manifest.
+Preserve existing settings and sync policies. Only add/modify what is requested.
+
+{outputGuidance}
+
+--- EXISTING CONFIGURATION ---
+{existingContent}
+--- END EXISTING CONFIGURATION ---
+
+## Examples
+
+Given: "Argo CD Application for a microservice deployed from a Git repo with auto-sync"
+
+```yaml
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: my-microservice
+  namespace: argocd
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: default
+  source:
+    repoURL: https://github.com/org/my-microservice.git
+    targetRevision: main
+    path: k8s/overlays/production
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: production
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
+    retry:
+      limit: 5
+      backoff:
+        duration: 5s
+        factor: 2
+        maxDuration: 3m
+```
+
+## Constraints
+
+- Always specify apiVersion and kind for Argo CD CRDs
+- Include finalizers for proper resource cleanup
+- Sync policies must explicitly set prune and selfHeal
+- Use targetRevision to pin deployments to specific branches or tags
+- Define project-level restrictions for production namespaces
+
+## Keywords
+
+argocd, argo, gitops, cd, continuous-deployment, kubernetes, k8s,
+application, applicationset, sync, deployment, helm, kustomize

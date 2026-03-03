@@ -1,0 +1,156 @@
+---
+dops: v2
+kind: tool
+
+meta:
+  name: gitlab-ci
+  version: 2.0.0
+  description: "Generate GitLab CI/CD pipeline configurations"
+  author: dojops
+  license: MIT
+  tags: [gitlab, ci, cd, pipeline, devops]
+
+context:
+  technology: GitLab CI
+  fileFormat: yaml
+  outputGuidance: |
+    Generate a valid GitLab CI/CD pipeline YAML file.
+    Output raw YAML content directly — do NOT wrap in JSON or code fences.
+    The output must be a valid .gitlab-ci.yml that GitLab can parse.
+  bestPractices:
+    - Define clear pipeline stages (build, test, deploy)
+    - Use caching to speed up dependency installation
+    - Use artifacts to pass build outputs between stages
+    - Define rules instead of only/except for job conditions
+    - Use parallel and matrix for multi-version testing
+    - Set appropriate timeouts for each job
+    - Use environment keywords for deployment tracking
+  context7Libraries:
+    - name: gitlab-ci
+      query: "GitLab CI YAML syntax, stages, jobs, rules, caching, artifacts, environments"
+
+files:
+  - path: ".gitlab-ci.yml"
+    format: raw
+
+detection:
+  paths: [".gitlab-ci.yml"]
+  updateMode: true
+
+verification:
+  structural:
+    - path: "stages"
+      required: true
+      type: array
+      minItems: 1
+      message: "Pipeline must define at least one stage"
+
+permissions:
+  filesystem: write
+  child_process: none
+  network: none
+
+scope:
+  write: [".gitlab-ci.yml"]
+
+risk:
+  level: LOW
+  rationale: "CI/CD pipeline changes require merge request review"
+
+execution:
+  mode: generate
+  deterministic: false
+  idempotent: true
+
+update:
+  strategy: replace
+  inputSource: file
+  injectAs: existingContent
+---
+# GitLab CI
+
+## Prompt
+
+You are a GitLab CI/CD expert. Generate a production-ready GitLab CI pipeline configuration.
+
+{outputGuidance}
+
+Follow these best practices:
+{bestPractices}
+
+{context7Docs}
+
+Project context: {projectContext}
+
+## Update Prompt
+
+You are a GitLab CI/CD expert. Update the existing GitLab CI pipeline.
+Preserve existing stages and jobs. Only add/modify what is requested.
+
+{outputGuidance}
+
+--- EXISTING CONFIGURATION ---
+{existingContent}
+--- END EXISTING CONFIGURATION ---
+
+## Examples
+
+Given: "GitLab CI pipeline for a Node.js project"
+
+```yaml
+stages:
+  - build
+  - test
+  - deploy
+
+variables:
+  NODE_VERSION: "20"
+
+default:
+  image: node:${NODE_VERSION}-alpine
+  cache:
+    key: ${CI_COMMIT_REF_SLUG}
+    paths:
+      - node_modules/
+
+build:
+  stage: build
+  script:
+    - npm ci
+    - npm run build
+  artifacts:
+    paths:
+      - dist/
+    expire_in: 1 hour
+
+test:
+  stage: test
+  script:
+    - npm ci
+    - npm run lint
+    - npm test
+  coverage: '/All files[^|]*\|[^|]*\s+([\d\.]+)/'
+
+deploy:
+  stage: deploy
+  script:
+    - npm run deploy
+  environment:
+    name: production
+  rules:
+    - if: $CI_COMMIT_BRANCH == "main"
+      when: manual
+```
+
+## Constraints
+
+- Pipeline must define stages
+- Jobs should have descriptive names
+- Use rules for job conditions (not only/except)
+- Cache dependencies between pipeline runs
+- Set appropriate timeouts for long-running jobs
+
+## Keywords
+
+gitlab, ci, cd, pipeline, stage, job, runner, deploy,
+gitlab-ci, merge-request, artifact, cache, environment

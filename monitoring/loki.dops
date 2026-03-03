@@ -1,0 +1,155 @@
+---
+dops: v2
+kind: tool
+
+meta:
+  name: loki
+  version: 2.0.0
+  description: "Generate Grafana Loki log pipeline configurations"
+  author: dojops
+  license: MIT
+  tags: [logging, loki, grafana, logs, pipeline]
+
+context:
+  technology: Grafana Loki
+  fileFormat: yaml
+  outputGuidance: |
+    Generate a complete, valid Grafana Loki configuration in YAML format.
+    Output raw YAML content directly — do NOT wrap in JSON or code fences.
+    The output must be a valid loki-config.yaml for Loki server configuration.
+  bestPractices:
+    - Configure appropriate retention periods based on compliance requirements
+    - Use chunk_target_size for optimal storage efficiency
+    - Set ingestion rate limits to prevent resource exhaustion
+    - Configure schema_config with appropriate period_config entries
+    - Use compactor for automatic log compaction and retention
+    - Enable multi-tenancy with auth_enabled when sharing clusters
+    - Set query limits to prevent expensive queries
+  context7Libraries:
+    - name: grafana-loki
+      query: "Loki configuration YAML, schema_config, storage_config, ingester, compactor, limits"
+
+files:
+  - path: "loki-config.yaml"
+    format: raw
+
+detection:
+  paths: ["loki-config.yaml", "loki.yaml"]
+  updateMode: true
+
+verification:
+  structural:
+    - path: "schema_config"
+      required: true
+      message: "Missing required 'schema_config' section"
+
+permissions:
+  filesystem: write
+  child_process: none
+  network: none
+
+scope:
+  write: ["loki-config.yaml", "loki.yaml"]
+
+risk:
+  level: LOW
+  rationale: "Loki config changes require a service restart to take effect"
+
+execution:
+  mode: generate
+  deterministic: false
+  idempotent: true
+
+update:
+  strategy: replace
+  inputSource: file
+  injectAs: existingContent
+---
+# Loki
+
+## Prompt
+
+You are a Grafana Loki expert specializing in log aggregation pipeline configuration.
+
+{outputGuidance}
+
+Follow these best practices:
+{bestPractices}
+
+{context7Docs}
+
+Project context: {projectContext}
+
+## Update Prompt
+
+You are a Loki expert. Update the existing Loki configuration.
+Preserve existing storage and schema settings. Only add/modify what is requested.
+
+{outputGuidance}
+
+--- EXISTING CONFIGURATION ---
+{existingContent}
+--- END EXISTING CONFIGURATION ---
+
+## Examples
+
+Given: "Loki configuration with filesystem storage, 30-day retention, and rate limits"
+
+```yaml
+auth_enabled: false
+
+server:
+  http_listen_port: 3100
+
+common:
+  path_prefix: /loki
+  storage:
+    filesystem:
+      chunks_directory: /loki/chunks
+      rules_directory: /loki/rules
+  replication_factor: 1
+  ring:
+    kvstore:
+      store: inmemory
+
+schema_config:
+  configs:
+    - from: "2024-01-01"
+      store: tsdb
+      object_store: filesystem
+      schema: v13
+      index:
+        prefix: index_
+        period: 24h
+
+storage_config:
+  tsdb_shipper:
+    active_index_directory: /loki/tsdb-index
+    cache_location: /loki/tsdb-cache
+
+limits_config:
+  retention_period: 720h
+  ingestion_rate_mb: 10
+  ingestion_burst_size_mb: 20
+  max_query_series: 500
+  max_query_parallelism: 2
+
+compactor:
+  working_directory: /loki/compactor
+  compaction_interval: 10m
+  retention_enabled: true
+  retention_delete_delay: 2h
+```
+
+## Constraints
+
+- Always configure schema_config with version and period
+- Set retention_period in limits_config for log lifecycle management
+- Define ingestion rate limits to prevent overload
+- Use TSDB store for new deployments (not BoltDB)
+- Configure compactor when retention is enabled
+
+## Keywords
+
+loki, grafana-loki, logging, logs, log-aggregation, promtail,
+logql, pipeline, retention, grafana, observability

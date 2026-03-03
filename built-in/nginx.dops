@@ -1,0 +1,147 @@
+---
+dops: v2
+kind: tool
+
+meta:
+  name: nginx
+  version: 2.0.0
+  description: "Generate Nginx web server configurations"
+  author: dojops
+  license: MIT
+  tags: [nginx, web, server, proxy, reverse-proxy]
+
+context:
+  technology: Nginx
+  fileFormat: raw
+  outputGuidance: |
+    Generate a valid Nginx configuration file.
+    Output raw Nginx config content directly — do NOT wrap in JSON or code fences.
+    The output must be a valid nginx.conf that nginx can parse.
+  bestPractices:
+    - Enable gzip compression for text-based content types
+    - Set appropriate worker_connections and worker_processes
+    - Configure proper logging with access and error logs
+    - Use upstream blocks for load balancing
+    - Set appropriate timeouts for proxy connections
+    - Include security headers (X-Frame-Options, X-Content-Type-Options, etc.)
+    - Use try_files for static file serving with fallback
+  context7Libraries:
+    - name: nginx
+      query: "Nginx configuration syntax, server blocks, location, upstream, proxy_pass, SSL/TLS"
+
+files:
+  - path: "nginx.conf"
+    format: raw
+
+detection:
+  paths: ["nginx.conf", "nginx/*.conf", "conf.d/*.conf"]
+  updateMode: true
+
+verification:
+  binary:
+    command: "nginx -t -c nginx.conf"
+    parser: nginx-stderr
+    timeout: 30000
+    cwd: output
+
+permissions:
+  filesystem: write
+  child_process: required
+  network: none
+
+scope:
+  write: ["nginx.conf", "nginx/*.conf", "conf.d/*.conf"]
+
+risk:
+  level: MEDIUM
+  rationale: "Web server configuration changes affect traffic routing"
+
+execution:
+  mode: generate
+  deterministic: false
+  idempotent: true
+
+update:
+  strategy: replace
+  inputSource: file
+  injectAs: existingContent
+---
+# Nginx
+
+## Prompt
+
+You are an Nginx expert. Generate a production-ready Nginx configuration.
+
+{outputGuidance}
+
+Follow these best practices:
+{bestPractices}
+
+{context7Docs}
+
+Project context: {projectContext}
+
+## Update Prompt
+
+You are an Nginx expert. Update the existing Nginx configuration.
+Preserve existing server blocks and settings. Only add/modify what is requested.
+
+{outputGuidance}
+
+--- EXISTING CONFIGURATION ---
+{existingContent}
+--- END EXISTING CONFIGURATION ---
+
+## Examples
+
+Given: "Nginx reverse proxy for a Node.js app on port 3000"
+
+```nginx
+upstream app_backend {
+    server 127.0.0.1:3000;
+}
+
+server {
+    listen 80;
+    server_name example.com;
+
+    access_log /var/log/nginx/app.access.log;
+    error_log /var/log/nginx/app.error.log;
+
+    # Security headers
+    add_header X-Frame-Options "SAMEORIGIN" always;
+    add_header X-Content-Type-Options "nosniff" always;
+    add_header X-XSS-Protection "1; mode=block" always;
+
+    # Gzip compression
+    gzip on;
+    gzip_types text/plain text/css application/json application/javascript;
+
+    location / {
+        proxy_pass http://app_backend;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+
+    location /static/ {
+        alias /var/www/static/;
+        expires 30d;
+        add_header Cache-Control "public, immutable";
+    }
+}
+```
+
+## Constraints
+
+- Server blocks must specify listen directive
+- Proxy configurations must include appropriate headers
+- Enable gzip compression for text content
+- Include security headers in server blocks
+- Use upstream blocks for backend servers
+
+## Keywords
+
+nginx, web, server, proxy, reverse-proxy, load-balancer,
+upstream, location, ssl, tls, https, configuration, conf

@@ -1,0 +1,140 @@
+---
+dops: v2
+kind: tool
+
+meta:
+  name: vault
+  version: 2.0.0
+  description: "Generate HashiCorp Vault server and policy configurations"
+  author: dojops
+  license: MIT
+  tags: [secrets, vault, hashicorp, security, encryption]
+
+context:
+  technology: HashiCorp Vault
+  fileFormat: hcl
+  outputGuidance: |
+    Generate valid HashiCorp Vault configuration in HCL format.
+    Output raw HCL content directly — do NOT wrap in JSON or code fences.
+    The output must be valid HCL that Vault can parse for server config or policy definitions.
+  bestPractices:
+    - Use least-privilege policies with explicit path-based access control
+    - Enable audit logging for all Vault operations
+    - Configure auto-unseal using cloud KMS (AWS KMS, GCP KMS, Azure Key Vault)
+    - Use namespaces for multi-tenant isolation in enterprise
+    - Set appropriate default and max TTLs for secrets and tokens
+    - Enable TLS for all listener endpoints
+    - Use integrated storage (Raft) for production deployments
+  context7Libraries:
+    - name: vault
+      query: "Vault HCL configuration, policy syntax, server config, storage backend, auth methods, secrets engines"
+
+files:
+  - path: "vault-config.hcl"
+    format: raw
+
+detection:
+  paths: ["vault*.hcl", "vault/*.hcl"]
+  updateMode: true
+
+verification:
+  binary:
+    command: "vault policy fmt vault-config.hcl"
+    parser: generic-stderr
+    timeout: 30000
+    cwd: output
+
+permissions:
+  filesystem: write
+  child_process: required
+  network: none
+
+scope:
+  write: ["vault*.hcl", "vault/*.hcl"]
+
+risk:
+  level: HIGH
+  rationale: "Vault configuration controls access to secrets and encryption keys"
+
+execution:
+  mode: generate
+  deterministic: false
+  idempotent: true
+
+update:
+  strategy: replace
+  inputSource: file
+  injectAs: existingContent
+---
+# Vault
+
+## Prompt
+
+You are a HashiCorp Vault expert specializing in secrets management and security policy configuration.
+
+{outputGuidance}
+
+Follow these best practices:
+{bestPractices}
+
+{context7Docs}
+
+Project context: {projectContext}
+
+## Update Prompt
+
+You are a Vault expert. Update the existing Vault configuration.
+Preserve existing policies and settings. Only add/modify what is requested.
+
+{outputGuidance}
+
+--- EXISTING CONFIGURATION ---
+{existingContent}
+--- END EXISTING CONFIGURATION ---
+
+## Examples
+
+Given: "Vault policy for a payments team with read access to secrets and database credentials"
+
+```hcl
+# Payments team policy — read-only access to payment secrets
+path "secret/data/payments/*" {
+  capabilities = ["read", "list"]
+}
+
+path "secret/metadata/payments/*" {
+  capabilities = ["list"]
+}
+
+# Database credential generation
+path "database/creds/payments-readonly" {
+  capabilities = ["read"]
+}
+
+# Allow token self-management
+path "auth/token/lookup-self" {
+  capabilities = ["read"]
+}
+
+path "auth/token/renew-self" {
+  capabilities = ["update"]
+}
+
+# Deny access to other team secrets
+path "secret/data/platform/*" {
+  capabilities = ["deny"]
+}
+```
+
+## Constraints
+
+- Always use least-privilege access with explicit deny where needed
+- Never grant root or sudo capabilities in application policies
+- Use path wildcards carefully — prefer explicit paths over broad globs
+- Include token self-management paths for operational use
+- Separate policies by team or service for clear access boundaries
+
+## Keywords
+
+vault, hashicorp, secrets, secret-management, policy, hcl, token,
+auth, encryption, kms, pki, transit, kv

@@ -1,0 +1,149 @@
+---
+dops: v2
+kind: tool
+
+meta:
+  name: ansible
+  version: 2.0.0
+  description: "Generate Ansible playbooks for configuration management"
+  author: dojops
+  license: MIT
+  tags: [ansible, playbook, automation, configuration, devops]
+
+context:
+  technology: Ansible
+  fileFormat: raw
+  outputGuidance: |
+    Generate a valid Ansible playbook in YAML format.
+    Output raw YAML content directly — do NOT wrap in JSON or code fences.
+    The output must be a valid Ansible playbook that ansible-playbook can execute.
+  bestPractices:
+    - Use handlers for service restarts triggered by configuration changes
+    - Group related tasks with blocks and meaningful names
+    - Use variables for environment-specific values
+    - Prefer modules over raw/shell commands where possible
+    - Use become (sudo) only when necessary and specify become_user
+    - Include tags for selective task execution
+    - Use ansible-vault for sensitive data references
+  context7Libraries:
+    - name: ansible
+      query: "Ansible playbook syntax, modules, handlers, variables, roles, tasks"
+
+files:
+  - path: "playbook.yml"
+    format: raw
+
+detection:
+  paths: ["playbook.yml", "*.yml", "site.yml"]
+  updateMode: true
+
+verification:
+  binary:
+    command: "ansible-playbook --syntax-check playbook.yml"
+    parser: ansible-syntax
+    timeout: 30000
+    cwd: output
+
+permissions:
+  filesystem: write
+  child_process: required
+  network: none
+
+scope:
+  write: ["*.yml", "*.yaml"]
+
+risk:
+  level: MEDIUM
+  rationale: "Playbook changes may modify system configuration"
+
+execution:
+  mode: generate
+  deterministic: false
+  idempotent: true
+
+update:
+  strategy: replace
+  inputSource: file
+  injectAs: existingContent
+---
+# Ansible
+
+## Prompt
+
+You are an Ansible expert. Generate a production-ready Ansible playbook.
+
+{outputGuidance}
+
+Follow these best practices:
+{bestPractices}
+
+{context7Docs}
+
+Project context: {projectContext}
+
+## Update Prompt
+
+You are an Ansible expert. Update the existing Ansible playbook.
+Preserve existing tasks and handlers. Only add/modify what is requested.
+
+{outputGuidance}
+
+--- EXISTING CONFIGURATION ---
+{existingContent}
+--- END EXISTING CONFIGURATION ---
+
+## Examples
+
+Given: "Install and configure Nginx on Ubuntu servers"
+
+```yaml
+---
+- name: Configure Nginx web server
+  hosts: webservers
+  become: true
+  vars:
+    nginx_port: 80
+    server_name: example.com
+
+  handlers:
+    - name: Restart nginx
+      ansible.builtin.service:
+        name: nginx
+        state: restarted
+
+  tasks:
+    - name: Install Nginx
+      ansible.builtin.apt:
+        name: nginx
+        state: present
+        update_cache: true
+      tags: [install]
+
+    - name: Configure Nginx site
+      ansible.builtin.template:
+        src: templates/nginx.conf.j2
+        dest: /etc/nginx/sites-available/default
+        mode: "0644"
+      notify: Restart nginx
+      tags: [configure]
+
+    - name: Enable Nginx service
+      ansible.builtin.service:
+        name: nginx
+        state: started
+        enabled: true
+      tags: [service]
+```
+
+## Constraints
+
+- Each task must have a descriptive name
+- Use fully qualified collection names (e.g., ansible.builtin.apt)
+- Handlers should be used for service restarts
+- Tasks should be idempotent
+- No hardcoded passwords or secrets
+
+## Keywords
+
+ansible, playbook, task, handler, role, automation, configuration,
+provision, deploy, inventory, module, variable, become

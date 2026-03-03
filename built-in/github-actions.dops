@@ -1,0 +1,150 @@
+---
+dops: v2
+kind: tool
+
+meta:
+  name: github-actions
+  version: 2.0.0
+  description: "Generate GitHub Actions CI/CD workflow configurations"
+  author: dojops
+  license: MIT
+  tags: [ci, cd, github, workflow, actions]
+
+context:
+  technology: GitHub Actions
+  fileFormat: yaml
+  outputGuidance: |
+    Generate a complete, valid GitHub Actions workflow YAML file.
+    Output raw YAML content directly — do NOT wrap in JSON or code fences.
+    The output must be a valid .yml file that can be placed directly in .github/workflows/.
+  bestPractices:
+    - Use matrix strategy for multi-version testing
+    - Enable dependency caching for faster builds
+    - Use least-privilege permissions with explicit permissions block
+    - Pin action versions to specific major versions (e.g., actions/checkout@v4)
+    - Separate CI and CD into distinct jobs with appropriate dependencies
+    - Use environment protection rules for deployment jobs
+    - Add concurrency groups to prevent duplicate workflow runs
+  context7Libraries:
+    - name: github-actions
+      query: "GitHub Actions workflow syntax, jobs, steps, matrix strategy, caching"
+
+files:
+  - path: ".github/workflows/ci.yml"
+    format: raw
+
+detection:
+  paths: [".github/workflows/*.yml", ".github/workflows/*.yaml"]
+  updateMode: true
+
+verification:
+  structural:
+    - path: "on"
+      required: true
+      message: "Missing required 'on' trigger"
+    - path: "jobs"
+      required: true
+      message: "Missing required 'jobs' section"
+    - path: "name"
+      required: true
+      message: "Workflow must have a name"
+
+permissions:
+  filesystem: write
+  child_process: none
+  network: none
+
+scope:
+  write: [".github/workflows/*.yml"]
+
+risk:
+  level: LOW
+  rationale: "CI/CD workflow changes require PR review"
+
+execution:
+  mode: generate
+  deterministic: false
+  idempotent: true
+
+update:
+  strategy: replace
+  inputSource: file
+  injectAs: existingContent
+---
+# GitHub Actions
+
+## Prompt
+
+You are a CI/CD expert specializing in GitHub Actions workflows.
+
+{outputGuidance}
+
+Follow these best practices:
+{bestPractices}
+
+{context7Docs}
+
+Project context: {projectContext}
+
+## Update Prompt
+
+You are a CI/CD expert. Update the existing GitHub Actions workflow.
+Preserve existing structure and settings. Only add/modify what is requested.
+
+{outputGuidance}
+
+--- EXISTING CONFIGURATION ---
+{existingContent}
+--- END EXISTING CONFIGURATION ---
+
+## Examples
+
+Given: "CI workflow for a Node.js project with linting, testing, and building"
+
+```yaml
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        node-version: [18, 20]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Setup Node.js ${{ matrix.node-version }}
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node-version }}
+          cache: npm
+      - name: Install dependencies
+        run: npm ci
+      - name: Lint
+        run: npm run lint
+      - name: Test
+        run: npm test
+      - name: Build
+        run: npm run build
+```
+
+## Constraints
+
+- Each job must specify runs-on
+- Steps should have descriptive names
+- Use concurrency groups to cancel outdated runs
+- Always include a name for the workflow
+- Use pull_request trigger for PRs (not pull_request_target unless needed)
+
+## Keywords
+
+github, actions, workflow, ci, cd, pipeline, build, test, deploy,
+continuous-integration, continuous-deployment, github-actions, gha

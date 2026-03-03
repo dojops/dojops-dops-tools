@@ -1,0 +1,163 @@
+---
+dops: v2
+kind: tool
+
+meta:
+  name: haproxy
+  version: 2.0.0
+  description: "Generate HAProxy load balancer configurations"
+  author: dojops
+  license: MIT
+  tags: [loadbalancer, haproxy, proxy, tcp, http]
+
+context:
+  technology: HAProxy
+  fileFormat: raw
+  outputGuidance: |
+    Generate a complete, valid HAProxy configuration file.
+    Output raw HAProxy config content directly — do NOT wrap in JSON or code fences.
+    The output must be a valid haproxy.cfg that `haproxy -c -f` validates.
+    Include global, defaults, frontend, and backend sections.
+  bestPractices:
+    - Set appropriate timeouts in defaults (connect, client, server)
+    - Use health checks on all backend servers
+    - Enable logging via syslog for monitoring and debugging
+    - Configure SSL/TLS termination with strong cipher suites
+    - Use ACLs for request routing based on paths or headers
+    - Enable stats page for monitoring (with authentication)
+    - Set maxconn limits to prevent resource exhaustion
+  context7Libraries:
+    - name: haproxy
+      query: "HAProxy configuration, frontend, backend, ACLs, health checks, SSL termination, load balancing"
+
+files:
+  - path: "haproxy.cfg"
+    format: raw
+
+detection:
+  paths: ["haproxy.cfg"]
+  updateMode: true
+
+verification:
+  binary:
+    command: "haproxy -c -f haproxy.cfg"
+    parser: generic-stderr
+    timeout: 30000
+    cwd: output
+
+permissions:
+  filesystem: write
+  child_process: required
+  network: none
+
+scope:
+  write: ["haproxy.cfg"]
+
+risk:
+  level: MEDIUM
+  rationale: "Load balancer changes affect traffic routing and availability"
+
+execution:
+  mode: generate
+  deterministic: false
+  idempotent: true
+
+update:
+  strategy: replace
+  inputSource: file
+  injectAs: existingContent
+---
+# HAProxy
+
+## Prompt
+
+You are an HAProxy expert specializing in load balancer and reverse proxy configurations.
+
+{outputGuidance}
+
+Follow these best practices:
+{bestPractices}
+
+{context7Docs}
+
+Project context: {projectContext}
+
+## Update Prompt
+
+You are an HAProxy expert. Update the existing HAProxy configuration.
+Preserve existing frontends and backends. Only add/modify what is requested.
+
+{outputGuidance}
+
+--- EXISTING CONFIGURATION ---
+{existingContent}
+--- END EXISTING CONFIGURATION ---
+
+## Examples
+
+Given: "HAProxy config with HTTP frontend, round-robin backend, health checks, and stats page"
+
+```
+global
+    log         /dev/log local0
+    log         /dev/log local1 notice
+    maxconn     4096
+    user        haproxy
+    group       haproxy
+    daemon
+
+defaults
+    log     global
+    mode    http
+    option  httplog
+    option  dontlognull
+    option  forwardfor
+    timeout connect 5s
+    timeout client  30s
+    timeout server  30s
+    retries 3
+
+frontend http_front
+    bind *:80
+    default_backend app_servers
+
+    acl is_api path_beg /api
+    use_backend api_servers if is_api
+
+backend app_servers
+    balance roundrobin
+    option httpchk GET /health
+    http-check expect status 200
+
+    server app1 10.0.0.1:3000 check inter 10s fall 3 rise 2
+    server app2 10.0.0.2:3000 check inter 10s fall 3 rise 2
+    server app3 10.0.0.3:3000 check inter 10s fall 3 rise 2
+
+backend api_servers
+    balance leastconn
+    option httpchk GET /health
+    http-check expect status 200
+
+    server api1 10.0.1.1:8080 check inter 10s fall 3 rise 2
+    server api2 10.0.1.2:8080 check inter 10s fall 3 rise 2
+
+listen stats
+    bind *:8404
+    stats enable
+    stats uri /stats
+    stats refresh 10s
+    stats auth admin:password
+```
+
+## Constraints
+
+- Always include global and defaults sections
+- Set timeouts for connect, client, and server
+- Enable health checks on all backend servers
+- Use ACLs for path-based routing instead of multiple frontends
+- Stats page must require authentication
+
+## Keywords
+
+haproxy, loadbalancer, load-balancer, proxy, reverse-proxy, tcp,
+http, frontend, backend, acl, health-check, round-robin, ssl

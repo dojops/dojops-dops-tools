@@ -1,0 +1,154 @@
+---
+dops: v2
+kind: tool
+
+meta:
+  name: elasticsearch
+  version: 2.0.0
+  description: "Generate Elasticsearch index templates and configurations"
+  author: dojops
+  license: MIT
+  tags: [search, elasticsearch, logging, index, mapping]
+
+context:
+  technology: Elasticsearch
+  fileFormat: json
+  outputGuidance: |
+    Generate a valid Elasticsearch index template JSON configuration.
+    Output raw JSON content directly — do NOT wrap in code fences.
+    The output must be a valid Elasticsearch API-compatible JSON document.
+  bestPractices:
+    - Define explicit field mappings instead of relying on dynamic mapping
+    - Set appropriate shard and replica counts based on data volume
+    - Use index lifecycle management (ILM) policies for log rotation
+    - Configure refresh intervals based on indexing vs search priority
+    - Use keyword type for exact-match fields, text for full-text search
+    - Set date format explicitly for timestamp fields
+    - Use index aliases for zero-downtime reindexing
+  context7Libraries:
+    - name: elasticsearch
+      query: "Elasticsearch index template, mappings, settings, ILM policy, shard configuration"
+
+files:
+  - path: "elasticsearch/index-template.json"
+    format: raw
+
+detection:
+  paths: ["elasticsearch/*.json"]
+  updateMode: true
+
+verification:
+  structural:
+    - path: "index_patterns"
+      required: true
+      message: "Index template must have 'index_patterns'"
+
+permissions:
+  filesystem: write
+  child_process: none
+  network: none
+
+scope:
+  write: ["elasticsearch/*.json"]
+
+risk:
+  level: LOW
+  rationale: "Index template changes apply to new indices only"
+
+execution:
+  mode: generate
+  deterministic: false
+  idempotent: true
+
+update:
+  strategy: replace
+  inputSource: file
+  injectAs: existingContent
+---
+# Elasticsearch
+
+## Prompt
+
+You are an Elasticsearch expert specializing in index templates and cluster configuration.
+
+{outputGuidance}
+
+Follow these best practices:
+{bestPractices}
+
+{context7Docs}
+
+Project context: {projectContext}
+
+## Update Prompt
+
+You are an Elasticsearch expert. Update the existing index template.
+Preserve existing mappings and settings. Only add/modify what is requested.
+
+{outputGuidance}
+
+--- EXISTING CONFIGURATION ---
+{existingContent}
+--- END EXISTING CONFIGURATION ---
+
+## Examples
+
+Given: "Index template for application logs with timestamp, level, message, and service fields"
+
+```json
+{
+  "index_patterns": ["app-logs-*"],
+  "priority": 100,
+  "template": {
+    "settings": {
+      "number_of_shards": 3,
+      "number_of_replicas": 1,
+      "refresh_interval": "5s",
+      "index.lifecycle.name": "app-logs-policy",
+      "index.lifecycle.rollover_alias": "app-logs"
+    },
+    "mappings": {
+      "properties": {
+        "@timestamp": {
+          "type": "date",
+          "format": "strict_date_optional_time"
+        },
+        "level": {
+          "type": "keyword"
+        },
+        "message": {
+          "type": "text",
+          "fields": {
+            "keyword": {
+              "type": "keyword",
+              "ignore_above": 256
+            }
+          }
+        },
+        "service": {
+          "type": "keyword"
+        },
+        "trace_id": {
+          "type": "keyword"
+        },
+        "host": {
+          "type": "keyword"
+        }
+      }
+    }
+  }
+}
+```
+
+## Constraints
+
+- Always define explicit mappings for known fields
+- Use keyword type for fields used in aggregations and filtering
+- Set appropriate shard count based on expected data volume
+- Include @timestamp field with date type for time-series data
+- Use ILM policies for automatic index lifecycle management
+
+## Keywords
+
+elasticsearch, elastic, index, template, mapping, search, logging,
+kibana, ilm, shard, replica, query, aggregation, elk

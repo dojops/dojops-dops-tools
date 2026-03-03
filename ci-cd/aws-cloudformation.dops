@@ -1,0 +1,182 @@
+---
+dops: v2
+kind: tool
+
+meta:
+  name: aws-cloudformation
+  version: 2.0.0
+  description: "Generate AWS CloudFormation infrastructure templates"
+  author: dojops
+  license: MIT
+  tags: [iac, aws, cloudformation, cloud, infrastructure]
+
+context:
+  technology: AWS CloudFormation
+  fileFormat: yaml
+  outputGuidance: |
+    Generate a complete, valid AWS CloudFormation template in YAML format.
+    Output raw YAML content directly — do NOT wrap in JSON or code fences.
+    The output must be a valid CloudFormation template with AWSTemplateFormatVersion.
+    Use YAML format (not JSON) for readability.
+  bestPractices:
+    - Include AWSTemplateFormatVersion and Description at the top
+    - Use Parameters for environment-specific values with sensible defaults
+    - Define Outputs for cross-stack references and important resource attributes
+    - Use Conditions for environment-based resource creation
+    - Apply consistent tagging using AWS::CloudFormation::Stack tags
+    - Use !Ref, !GetAtt, and !Sub for dynamic references
+    - Organize resources logically with comments
+  context7Libraries:
+    - name: aws-cloudformation
+      query: "CloudFormation template syntax, resources, parameters, outputs, intrinsic functions, mappings"
+
+files:
+  - path: "template.yaml"
+    format: raw
+
+detection:
+  paths: ["template.yaml", "cfn/*.yaml", "cloudformation/*.yaml"]
+  updateMode: true
+
+verification:
+  structural:
+    - path: "AWSTemplateFormatVersion"
+      required: true
+      message: "Missing required 'AWSTemplateFormatVersion'"
+    - path: "Resources"
+      required: true
+      message: "Missing required 'Resources' section"
+
+permissions:
+  filesystem: write
+  child_process: none
+  network: none
+
+scope:
+  write: ["template.yaml", "cfn/*.yaml"]
+
+risk:
+  level: MEDIUM
+  rationale: "CloudFormation changes may create, modify, or delete AWS resources"
+
+execution:
+  mode: generate
+  deterministic: false
+  idempotent: true
+
+update:
+  strategy: replace
+  inputSource: file
+  injectAs: existingContent
+---
+# AWS CloudFormation
+
+## Prompt
+
+You are an AWS CloudFormation expert. Generate production-ready CloudFormation templates.
+
+{outputGuidance}
+
+Follow these best practices:
+{bestPractices}
+
+{context7Docs}
+
+Project context: {projectContext}
+
+## Update Prompt
+
+You are an AWS CloudFormation expert. Update the existing CloudFormation template.
+Preserve existing resources and parameters. Only add/modify what is requested.
+
+{outputGuidance}
+
+--- EXISTING CONFIGURATION ---
+{existingContent}
+--- END EXISTING CONFIGURATION ---
+
+## Examples
+
+Given: "VPC with public and private subnets, NAT gateway, and security groups"
+
+```yaml
+AWSTemplateFormatVersion: "2010-09-09"
+Description: "VPC with public and private subnets"
+
+Parameters:
+  EnvironmentName:
+    Type: String
+    Default: production
+    AllowedValues: [development, staging, production]
+  VpcCIDR:
+    Type: String
+    Default: "10.0.0.0/16"
+
+Resources:
+  VPC:
+    Type: AWS::EC2::VPC
+    Properties:
+      CidrBlock: !Ref VpcCIDR
+      EnableDnsSupport: true
+      EnableDnsHostnames: true
+      Tags:
+        - Key: Name
+          Value: !Sub "${EnvironmentName}-vpc"
+
+  PublicSubnet:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC
+      CidrBlock: "10.0.1.0/24"
+      AvailabilityZone: !Select [0, !GetAZs ""]
+      MapPublicIpOnLaunch: true
+      Tags:
+        - Key: Name
+          Value: !Sub "${EnvironmentName}-public-subnet"
+
+  PrivateSubnet:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC
+      CidrBlock: "10.0.2.0/24"
+      AvailabilityZone: !Select [0, !GetAZs ""]
+      Tags:
+        - Key: Name
+          Value: !Sub "${EnvironmentName}-private-subnet"
+
+  InternetGateway:
+    Type: AWS::EC2::InternetGateway
+    Properties:
+      Tags:
+        - Key: Name
+          Value: !Sub "${EnvironmentName}-igw"
+
+  InternetGatewayAttachment:
+    Type: AWS::EC2::VPCGatewayAttachment
+    Properties:
+      VpcId: !Ref VPC
+      InternetGatewayId: !Ref InternetGateway
+
+Outputs:
+  VpcId:
+    Description: VPC ID
+    Value: !Ref VPC
+    Export:
+      Name: !Sub "${EnvironmentName}-VpcId"
+  PublicSubnetId:
+    Description: Public Subnet ID
+    Value: !Ref PublicSubnet
+```
+
+## Constraints
+
+- Always include AWSTemplateFormatVersion and Description
+- Use Parameters for all configurable values
+- No hardcoded AWS account IDs or credentials
+- Apply tags to all taggable resources
+- Use !Sub for string interpolation with variable references
+
+## Keywords
+
+cloudformation, cfn, aws, stack, template, infrastructure, iac,
+cloud, s3, ec2, vpc, rds, lambda, iam, sns, sqs

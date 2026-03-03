@@ -1,0 +1,129 @@
+---
+dops: v2
+kind: tool
+
+meta:
+  name: helm
+  version: 2.0.0
+  description: "Generate Helm chart scaffolding with values and templates"
+  author: dojops
+  license: MIT
+  tags: [helm, kubernetes, k8s, chart, package]
+
+context:
+  technology: Helm
+  fileFormat: json
+  outputGuidance: |
+    Generate Helm chart files as a JSON object with file paths as keys and file contents as string values.
+    Format: { "files": { "Chart.yaml": "content...", "values.yaml": "content...", "templates/deployment.yaml": "content..." } }
+    Each file content must be a valid file string (YAML for Chart.yaml and values.yaml, Go templates for templates/).
+    Do NOT output raw YAML — use the JSON wrapper to enable multi-file output.
+  bestPractices:
+    - Define sensible defaults in values.yaml that work out of the box
+    - Set resource requests and limits in values
+    - Use named templates in _helpers.tpl for DRY label management
+    - Include standard Kubernetes labels (app.kubernetes.io/*)
+    - Define health check probes in deployment template
+    - Make image tag configurable via values
+    - Include NOTES.txt with post-install instructions
+  context7Libraries:
+    - name: helm
+      query: "Helm chart structure, values.yaml, Go template functions, Chart.yaml"
+
+files:
+  - path: "chart/Chart.yaml"
+    format: raw
+  - path: "chart/values.yaml"
+    format: raw
+  - path: "chart/templates/deployment.yaml"
+    format: raw
+  - path: "chart/templates/service.yaml"
+    format: raw
+  - path: "chart/templates/_helpers.tpl"
+    format: raw
+
+detection:
+  paths: ["*/values.yaml", "*/Chart.yaml", "Chart.yaml"]
+  updateMode: true
+
+verification:
+  binary:
+    command: "helm lint ."
+    parser: helm-lint
+    timeout: 30000
+    cwd: output
+
+permissions:
+  filesystem: write
+  child_process: required
+  network: none
+
+scope:
+  write: ["chart/**"]
+
+risk:
+  level: MEDIUM
+  rationale: "Chart changes affect Kubernetes deployments"
+
+execution:
+  mode: generate
+  deterministic: false
+  idempotent: true
+
+update:
+  strategy: replace
+  inputSource: file
+  injectAs: existingContent
+---
+# Helm
+
+## Prompt
+
+You are a Helm chart expert. Generate a complete Helm chart.
+
+{outputGuidance}
+
+Follow these best practices:
+{bestPractices}
+
+{context7Docs}
+
+Project context: {projectContext}
+
+## Update Prompt
+
+You are a Helm chart expert. Update the existing Helm chart values and templates.
+Preserve existing configuration. Only add/modify what is requested.
+
+{outputGuidance}
+
+--- EXISTING CONFIGURATION ---
+{existingContent}
+--- END EXISTING CONFIGURATION ---
+
+## Examples
+
+Given: "Helm chart for nginx with 3 replicas on port 80"
+
+```json
+{
+  "files": {
+    "Chart.yaml": "apiVersion: v2\nname: nginx\ndescription: A Helm chart for nginx\ntype: application\nversion: 0.1.0\nappVersion: \"1.25\"\n",
+    "values.yaml": "replicaCount: 3\n\nimage:\n  repository: nginx\n  tag: \"1.25\"\n  pullPolicy: IfNotPresent\n\nservice:\n  type: ClusterIP\n  port: 80\n\nresources:\n  limits:\n    cpu: 500m\n    memory: 256Mi\n  requests:\n    cpu: 100m\n    memory: 128Mi\n",
+    "templates/deployment.yaml": "apiVersion: apps/v1\nkind: Deployment\nmetadata:\n  name: {{ include \"nginx.fullname\" . }}\n  labels:\n    {{- include \"nginx.labels\" . | nindent 4 }}\nspec:\n  replicas: {{ .Values.replicaCount }}\n  selector:\n    matchLabels:\n      {{- include \"nginx.selectorLabels\" . | nindent 6 }}\n  template:\n    metadata:\n      labels:\n        {{- include \"nginx.selectorLabels\" . | nindent 8 }}\n    spec:\n      containers:\n        - name: {{ .Chart.Name }}\n          image: \"{{ .Values.image.repository }}:{{ .Values.image.tag }}\"\n          imagePullPolicy: {{ .Values.image.pullPolicy }}\n          ports:\n            - name: http\n              containerPort: {{ .Values.service.port }}\n          resources:\n            {{- toYaml .Values.resources | nindent 12 }}\n"
+  }
+}
+```
+
+## Constraints
+
+- Image tags should be specific versions, not :latest
+- Resource limits must be defined for production readiness
+- Service port must be a valid port number (1-65535)
+- Chart name must be lowercase alphanumeric with hyphens
+- values.yaml must include image, service, and resources sections
+
+## Keywords
+
+helm, chart, values, kubernetes, k8s, package, template,
+deployment, service, ingress, values.yaml, release

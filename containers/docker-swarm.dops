@@ -1,0 +1,188 @@
+---
+dops: v2
+kind: tool
+
+meta:
+  name: docker-swarm
+  version: 2.0.0
+  description: "Generate Docker Swarm stack deployment files"
+  author: dojops
+  license: MIT
+  tags: [container, docker, swarm, orchestration, stack]
+
+context:
+  technology: Docker Swarm
+  fileFormat: yaml
+  outputGuidance: |
+    Generate a complete, valid Docker Swarm stack file in YAML format.
+    Output raw YAML content directly — do NOT wrap in JSON or code fences.
+    The output must be a valid docker-stack.yml compatible with `docker stack deploy`.
+    Use Compose file version 3.8+ with deploy configuration.
+  bestPractices:
+    - Use version 3.8 or later for full Swarm feature support
+    - Define deploy replicas, update_config, and restart_policy
+    - Use placement constraints to control node scheduling
+    - Configure health checks for service monitoring
+    - Use secrets and configs for sensitive and configuration data
+    - Define resource reservations and limits under deploy.resources
+    - Use overlay networks for multi-host service communication
+  context7Libraries:
+    - name: docker-swarm
+      query: "Docker Swarm stack file, deploy configuration, services, networks, secrets, health checks"
+
+files:
+  - path: "docker-stack.yml"
+    format: raw
+
+detection:
+  paths: ["docker-stack.yml"]
+  updateMode: true
+
+verification:
+  structural:
+    - path: "services"
+      required: true
+      message: "Stack file must have a 'services' section"
+
+permissions:
+  filesystem: write
+  child_process: none
+  network: none
+
+scope:
+  write: ["docker-stack.yml"]
+
+risk:
+  level: MEDIUM
+  rationale: "Swarm stack changes affect running services across nodes"
+
+execution:
+  mode: generate
+  deterministic: false
+  idempotent: true
+
+update:
+  strategy: replace
+  inputSource: file
+  injectAs: existingContent
+---
+# Docker Swarm
+
+## Prompt
+
+You are a Docker Swarm expert specializing in stack deployment configurations.
+
+{outputGuidance}
+
+Follow these best practices:
+{bestPractices}
+
+{context7Docs}
+
+Project context: {projectContext}
+
+## Update Prompt
+
+You are a Docker Swarm expert. Update the existing Swarm stack file.
+Preserve existing services and networks. Only add/modify what is requested.
+
+{outputGuidance}
+
+--- EXISTING CONFIGURATION ---
+{existingContent}
+--- END EXISTING CONFIGURATION ---
+
+## Examples
+
+Given: "Production stack with a web app, API, and PostgreSQL database"
+
+```yaml
+version: "3.8"
+
+services:
+  web:
+    image: myapp/web:latest
+    ports:
+      - "80:3000"
+    deploy:
+      replicas: 3
+      update_config:
+        parallelism: 1
+        delay: 10s
+        order: start-first
+      restart_policy:
+        condition: on-failure
+        delay: 5s
+        max_attempts: 3
+      resources:
+        limits:
+          cpus: "0.5"
+          memory: 256M
+        reservations:
+          cpus: "0.25"
+          memory: 128M
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    networks:
+      - frontend
+
+  api:
+    image: myapp/api:latest
+    deploy:
+      replicas: 2
+      restart_policy:
+        condition: on-failure
+    environment:
+      DATABASE_URL: "postgresql://user:password@db:5432/myapp"
+    networks:
+      - frontend
+      - backend
+
+  db:
+    image: postgres:16-alpine
+    deploy:
+      replicas: 1
+      placement:
+        constraints:
+          - node.role == manager
+    volumes:
+      - db-data:/var/lib/postgresql/data
+    environment:
+      POSTGRES_DB: myapp
+      POSTGRES_USER: user
+      POSTGRES_PASSWORD_FILE: /run/secrets/db_password
+    secrets:
+      - db_password
+    networks:
+      - backend
+
+networks:
+  frontend:
+    driver: overlay
+  backend:
+    driver: overlay
+    internal: true
+
+volumes:
+  db-data:
+
+secrets:
+  db_password:
+    external: true
+```
+
+## Constraints
+
+- Use Compose file version 3.8 or later
+- All services must have deploy configuration with restart_policy
+- Secrets must use Docker secrets, never environment variables for passwords
+- Define resource limits for all production services
+- Use overlay networks for cross-node communication
+
+## Keywords
+
+docker, swarm, stack, compose, deploy, service, overlay,
+orchestration, cluster, node, manager, worker

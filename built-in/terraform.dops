@@ -1,0 +1,159 @@
+---
+dops: v2
+kind: tool
+
+meta:
+  name: terraform
+  version: 2.0.0
+  description: "Generate Terraform infrastructure-as-code configurations"
+  author: dojops
+  license: MIT
+  tags: [iac, cloud, aws, gcp, azure]
+
+context:
+  technology: Terraform
+  fileFormat: hcl
+  outputGuidance: |
+    Generate valid Terraform HCL configuration.
+    Output raw HCL content directly — do NOT wrap in JSON or code fences.
+    The output must be a valid .tf file that terraform can parse.
+    Include terraform block with required_providers, provider block, resource blocks, and any variables/outputs.
+  bestPractices:
+    - Pin provider versions using pessimistic constraint (~>) to prevent breaking changes
+    - Use variables for all environment-specific values
+    - Tag all resources with standard metadata (project, environment, managed-by)
+    - Use remote state backend for team collaboration
+    - Organize resources logically with clear naming conventions
+    - Define outputs for values needed by other configurations
+    - Use data sources instead of hardcoding resource references
+  context7Libraries:
+    - name: terraform
+      query: "Terraform HCL syntax, resource blocks, provider configuration, state management"
+
+files:
+  - path: "main.tf"
+    format: raw
+
+detection:
+  paths: ["main.tf", "*.tf", "terraform.tfstate"]
+  updateMode: true
+
+verification:
+  binary:
+    command: "terraform init -backend=false -input=false && terraform validate -json"
+    parser: terraform-json
+    timeout: 60000
+    cwd: output
+
+permissions:
+  filesystem: write
+  child_process: required
+  network: none
+
+scope:
+  write: ["*.tf"]
+
+risk:
+  level: MEDIUM
+  rationale: "Infrastructure changes may affect cloud resources"
+
+execution:
+  mode: generate
+  deterministic: false
+  idempotent: true
+
+update:
+  strategy: replace
+  inputSource: file
+  injectAs: existingContent
+---
+# Terraform
+
+## Prompt
+
+You are a Terraform expert. Generate production-ready Terraform HCL configuration.
+
+{outputGuidance}
+
+Follow these best practices:
+{bestPractices}
+
+{context7Docs}
+
+Project context: {projectContext}
+
+## Update Prompt
+
+You are a Terraform expert. Update the existing Terraform configuration.
+Preserve existing resources and settings. Only add/modify what is requested.
+
+{outputGuidance}
+
+--- EXISTING CONFIGURATION ---
+{existingContent}
+--- END EXISTING CONFIGURATION ---
+
+## Examples
+
+Given: "S3 bucket with versioning on AWS"
+
+```hcl
+terraform {
+  required_providers {
+    aws = {
+      source  = "hashicorp/aws"
+      version = "~> 5.0"
+    }
+  }
+}
+
+provider "aws" {
+  region = var.aws_region
+}
+
+variable "aws_region" {
+  type        = string
+  default     = "us-east-1"
+  description = "AWS region for resources"
+}
+
+variable "bucket_name" {
+  type        = string
+  description = "Name of the S3 bucket"
+}
+
+resource "aws_s3_bucket" "main" {
+  bucket = var.bucket_name
+
+  tags = {
+    Environment = "production"
+    ManagedBy   = "terraform"
+  }
+}
+
+resource "aws_s3_bucket_versioning" "main" {
+  bucket = aws_s3_bucket.main.id
+
+  versioning_configuration {
+    status = "Enabled"
+  }
+}
+
+output "bucket_arn" {
+  value       = aws_s3_bucket.main.arn
+  description = "ARN of the S3 bucket"
+}
+```
+
+## Constraints
+
+- Maximum 50 resources per generation
+- Variable names must use snake_case
+- Resource names must use snake_case
+- No hardcoded credentials (AWS keys, passwords, tokens)
+- Use snake_case for all identifiers
+
+## Keywords
+
+terraform, tf, infrastructure, iac, cloud, aws, gcp, azure, hcl,
+provider, resource, module, state, backend, s3, ec2, vpc, rds, lambda

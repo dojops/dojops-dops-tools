@@ -1,0 +1,151 @@
+---
+dops: v2
+kind: tool
+
+meta:
+  name: trivy-config
+  version: 2.0.0
+  description: "Generate Trivy scanner configuration files"
+  author: dojops
+  license: MIT
+  tags: [security, trivy, scanning, vulnerability, sbom]
+
+context:
+  technology: Trivy
+  fileFormat: yaml
+  outputGuidance: |
+    Generate a valid Trivy configuration in YAML format.
+    Output raw YAML content directly — do NOT wrap in JSON or code fences.
+    The output must be a valid trivy.yaml configuration file.
+  bestPractices:
+    - Set severity thresholds to filter noise (CRITICAL, HIGH)
+    - Configure ignore rules for accepted vulnerabilities with expiration dates
+    - Enable multiple scanners (vuln, misconfig, secret, license) as needed
+    - Use skip-dirs and skip-files to exclude irrelevant paths
+    - Configure output formats (table, json, sarif) for CI integration
+    - Set timeout appropriate for large image or filesystem scans
+    - Enable SBOM generation for supply chain security
+  context7Libraries:
+    - name: trivy
+      query: "Trivy configuration YAML, scanner options, severity filters, ignore rules, output formats"
+
+files:
+  - path: "trivy.yaml"
+    format: raw
+
+detection:
+  paths: ["trivy.yaml", ".trivy.yaml"]
+  updateMode: true
+
+verification:
+  structural:
+    - path: "severity"
+      required: false
+      message: "General YAML validity check"
+
+permissions:
+  filesystem: write
+  child_process: none
+  network: none
+
+scope:
+  write: ["trivy.yaml", ".trivy.yaml"]
+
+risk:
+  level: LOW
+  rationale: "Scanner configuration is read-only and does not modify resources"
+
+execution:
+  mode: generate
+  deterministic: false
+  idempotent: true
+
+update:
+  strategy: replace
+  inputSource: file
+  injectAs: existingContent
+---
+# Trivy Config
+
+## Prompt
+
+You are a security scanning expert specializing in Trivy vulnerability scanner configuration.
+
+{outputGuidance}
+
+Follow these best practices:
+{bestPractices}
+
+{context7Docs}
+
+Project context: {projectContext}
+
+## Update Prompt
+
+You are a Trivy expert. Update the existing Trivy configuration.
+Preserve existing settings and ignore rules. Only add/modify what is requested.
+
+{outputGuidance}
+
+--- EXISTING CONFIGURATION ---
+{existingContent}
+--- END EXISTING CONFIGURATION ---
+
+## Examples
+
+Given: "Trivy config for CI pipeline scanning container images and IaC with SARIF output"
+
+```yaml
+scan:
+  scanners:
+    - vuln
+    - misconfig
+    - secret
+  severity:
+    - CRITICAL
+    - HIGH
+  skip-dirs:
+    - node_modules
+    - .git
+    - vendor
+  skip-files:
+    - "**/*.test.ts"
+    - "**/*.spec.ts"
+
+vulnerability:
+  type:
+    - os
+    - library
+  ignore-unfixed: true
+
+misconfig:
+  include-non-failures: false
+  checks-bundle-repository: ghcr.io/aquasecurity/trivy-checks
+
+secret:
+  config: trivy-secret.yaml
+
+format: sarif
+output: trivy-results.sarif
+timeout: 10m
+
+db:
+  skip-update: false
+  download-java-db: true
+
+cache:
+  dir: /tmp/trivy-cache
+```
+
+## Constraints
+
+- Set severity filter to reduce noise in CI pipelines
+- Enable ignore-unfixed to skip vulnerabilities without available patches
+- Configure skip-dirs for large dependency directories
+- Set appropriate timeout for image scanning workloads
+- Use SARIF format for integration with GitHub Code Scanning
+
+## Keywords
+
+trivy, scanner, vulnerability, security, sbom, misconfig,
+container-scanning, iac-scanning, secret-scanning, aquasecurity

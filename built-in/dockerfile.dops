@@ -1,0 +1,131 @@
+---
+dops: v2
+kind: tool
+
+meta:
+  name: dockerfile
+  version: 2.0.0
+  description: "Generate multi-stage Dockerfiles and .dockerignore files"
+  author: dojops
+  license: MIT
+  tags: [docker, dockerfile, container, build, image]
+
+context:
+  technology: Docker
+  fileFormat: raw
+  outputGuidance: |
+    Generate a production-ready Dockerfile.
+    Output raw Dockerfile content directly — do NOT wrap in JSON or code fences.
+    The output must be a valid Dockerfile that docker can build.
+  bestPractices:
+    - Use multi-stage builds to minimize final image size
+    - Run as non-root user in the final stage
+    - Pin base image versions (never use :latest)
+    - Order instructions for optimal layer caching (deps before source)
+    - Minimize number of layers by combining RUN commands
+    - Include HEALTHCHECK for production images
+    - Never embed secrets or credentials in the image
+  context7Libraries:
+    - name: docker
+      query: "Dockerfile syntax, multi-stage builds, best practices, HEALTHCHECK, USER directive"
+
+files:
+  - path: "Dockerfile"
+    format: raw
+
+detection:
+  paths: ["Dockerfile", "dockerfile", "Containerfile"]
+  updateMode: true
+
+verification:
+  binary:
+    command: "hadolint --format json Dockerfile"
+    parser: hadolint-json
+    timeout: 30000
+    cwd: output
+
+permissions:
+  filesystem: write
+  child_process: required
+  network: none
+
+scope:
+  write: ["Dockerfile", ".dockerignore"]
+
+risk:
+  level: MEDIUM
+  rationale: "Build image changes may affect production runtime"
+
+execution:
+  mode: generate
+  deterministic: false
+  idempotent: true
+
+update:
+  strategy: replace
+  inputSource: file
+  injectAs: existingContent
+---
+# Dockerfile
+
+## Prompt
+
+You are a Docker expert. Generate a production-ready Dockerfile.
+
+{outputGuidance}
+
+Follow these best practices:
+{bestPractices}
+
+{context7Docs}
+
+Project context: {projectContext}
+
+## Update Prompt
+
+You are a Docker expert. Update the existing Dockerfile.
+Preserve existing structure. Only add/modify what is requested.
+
+{outputGuidance}
+
+--- EXISTING CONFIGURATION ---
+{existingContent}
+--- END EXISTING CONFIGURATION ---
+
+## Examples
+
+Given: "Dockerfile for a Node.js application with multi-stage build"
+
+```dockerfile
+FROM node:20-alpine AS builder
+WORKDIR /app
+COPY package*.json ./
+RUN npm ci
+COPY . .
+RUN npm run build
+
+FROM node:20-alpine
+RUN addgroup -g 1001 -S appgroup && adduser -u 1001 -S appuser -G appgroup
+WORKDIR /app
+COPY --from=builder /app/dist ./dist
+COPY --from=builder /app/node_modules ./node_modules
+COPY --from=builder /app/package.json ./
+EXPOSE 3000
+HEALTHCHECK CMD wget --no-verbose --tries=1 --spider http://localhost:3000/health || exit 1
+USER appuser
+CMD ["node", "dist/index.js"]
+```
+
+## Constraints
+
+- Use specific base image tags (no :latest)
+- Include HEALTHCHECK for production images
+- Run as non-root user
+- Minimize number of layers (combine RUN commands)
+- Copy dependency files before source for layer caching
+- No secrets or credentials in the image
+
+## Keywords
+
+docker, dockerfile, container, image, build, multi-stage,
+containerize, containerfile, docker-build, registry, push

@@ -1,0 +1,142 @@
+---
+dops: v2
+kind: tool
+
+meta:
+  name: makefile
+  version: 2.0.0
+  description: "Generate Makefiles for project build automation"
+  author: dojops
+  license: MIT
+  tags: [make, makefile, build, automation, tasks]
+
+context:
+  technology: GNU Make
+  fileFormat: raw
+  outputGuidance: |
+    Generate a valid Makefile.
+    Output raw Makefile content directly — do NOT wrap in JSON or code fences.
+    The output must be a valid Makefile with proper tab indentation for recipes.
+    IMPORTANT: Use actual tab characters (not spaces) for recipe indentation.
+  bestPractices:
+    - Declare .PHONY targets for non-file targets
+    - Include a help target that lists available targets
+    - Use variables for configurable values at the top
+    - Order targets logically (help first, then build, test, clean)
+    - Use @ prefix for commands that should not be echoed
+    - Include a clean target for removing build artifacts
+    - Use .DEFAULT_GOAL to set the default target
+  context7Libraries:
+    - name: gnu-make
+      query: "Makefile syntax, targets, prerequisites, variables, pattern rules, .PHONY"
+
+files:
+  - path: "Makefile"
+    format: raw
+
+detection:
+  paths: ["Makefile", "makefile", "GNUmakefile"]
+  updateMode: true
+
+verification:
+  binary:
+    command: "make -n -f Makefile"
+    parser: make-dryrun
+    timeout: 30000
+    cwd: output
+
+permissions:
+  filesystem: write
+  child_process: required
+  network: none
+
+scope:
+  write: ["Makefile"]
+
+risk:
+  level: LOW
+  rationale: "Makefile changes affect local build process only"
+
+execution:
+  mode: generate
+  deterministic: false
+  idempotent: true
+
+update:
+  strategy: replace
+  inputSource: file
+  injectAs: existingContent
+---
+# Makefile
+
+## Prompt
+
+You are a build automation expert. Generate a production-ready Makefile.
+
+{outputGuidance}
+
+Follow these best practices:
+{bestPractices}
+
+{context7Docs}
+
+Project context: {projectContext}
+
+## Update Prompt
+
+You are a build automation expert. Update the existing Makefile.
+Preserve existing targets and settings. Only add/modify what is requested.
+
+{outputGuidance}
+
+--- EXISTING CONFIGURATION ---
+{existingContent}
+--- END EXISTING CONFIGURATION ---
+
+## Examples
+
+Given: "Makefile for a Go project with build, test, lint, and Docker targets"
+
+```makefile
+.DEFAULT_GOAL := help
+.PHONY: help build test lint clean docker-build docker-push
+
+APP_NAME := myapp
+VERSION := $(shell git describe --tags --always --dirty)
+DOCKER_IMAGE := $(APP_NAME):$(VERSION)
+
+help: ## Show this help
+	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | sort | \
+		awk 'BEGIN {FS = ":.*?## "}; {printf "\033[36m%-20s\033[0m %s\n", $$1, $$2}'
+
+build: ## Build the application
+	go build -ldflags "-X main.version=$(VERSION)" -o bin/$(APP_NAME) ./cmd/$(APP_NAME)
+
+test: ## Run tests
+	go test -race -coverprofile=coverage.out ./...
+
+lint: ## Run linters
+	golangci-lint run ./...
+
+clean: ## Remove build artifacts
+	rm -rf bin/ coverage.out
+
+docker-build: ## Build Docker image
+	docker build -t $(DOCKER_IMAGE) .
+
+docker-push: docker-build ## Push Docker image
+	docker push $(DOCKER_IMAGE)
+```
+
+## Constraints
+
+- Use tabs for recipe indentation (not spaces)
+- Declare .PHONY for non-file targets
+- Include a help target
+- Variable names should be UPPER_CASE
+- Include a clean target
+
+## Keywords
+
+make, makefile, build, target, recipe, automation,
+task, phony, variable, prerequisite, clean, install
