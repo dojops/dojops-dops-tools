@@ -49,10 +49,15 @@ verification:
     - path: "jobs"
       required: true
       message: "Missing required 'jobs' section"
+  binary:
+    command: "circleci config validate .circleci/config.yml"
+    parser: generic-stderr
+    timeout: 30000
+    cwd: output
 
 permissions:
   filesystem: write
-  child_process: none
+  child_process: required
   network: none
 
 scope:

@@ -1,6 +1,6 @@
 # Contributing to dojops-dops-tools
 
-Thank you for contributing to the DojOps community tool collection!
+Thank you for contributing to the DojOps community module collection!
 
 ## Prerequisites
 
@@ -10,7 +10,7 @@ Thank you for contributing to the DojOps community tool collection!
 
 ## Categories
 
-Place your tool in the appropriate directory:
+Place your module in the appropriate directory:
 
 | Directory | Description |
 |-----------|-------------|
@@ -19,11 +19,11 @@ Place your tool in the appropriate directory:
 | `monitoring/` | Metrics, logging, tracing, alerting |
 | `security/` | Secrets, policies, scanning, compliance |
 
-## Creating a New Tool
+## Creating a New Module
 
 ### 1. Scaffold
 
-Create `<category>/<tool-name>.dops` following the v2 format:
+Create `<category>/<module-name>.dops` following the v2 format:
 
 ```yaml
 ---
@@ -111,8 +111,8 @@ node scripts/validate.mjs
 ### 4. Test with DojOps CLI
 
 ```bash
-dojops tools validate <category>/<tool-name>.dops
-dojops --tool <category>/<tool-name>.dops "test prompt"
+dojops modules validate <category>/<module-name>.dops
+dojops --module <category>/<module-name>.dops "test prompt"
 ```
 
 ## Quality Checklist
@@ -122,18 +122,18 @@ dojops --tool <category>/<tool-name>.dops "test prompt"
 - [ ] `context.bestPractices` has at least 7 entries (include both best practices and constraints)
 - [ ] `verification` section uses structural or binary checks
 - [ ] `risk.level` has an accurate `rationale`
-- [ ] `## Keywords` includes the tool name and common aliases
+- [ ] `## Keywords` includes the module name and common aliases
 - [ ] `node scripts/validate.mjs` passes
 
 ## Pull Request Naming
 
-Use the format: `tools(<category>): add <tool-name>`
+Use the format: `modules(<category>): add <module-name>`
 
 Examples:
-- `tools(ci-cd): add jenkins`
-- `tools(monitoring): add grafana`
-- `tools(security): add vault`
+- `modules(ci-cd): add jenkins`
+- `modules(monitoring): add grafana`
+- `modules(security): add vault`
 
 ## Code of Conduct
 
-Be respectful and constructive. Focus on quality tools that help the community.
+Be respectful and constructive. Focus on quality modules that help the community.

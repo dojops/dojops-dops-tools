@@ -50,10 +50,15 @@ verification:
     - path: "Resources"
       required: true
       message: "Missing required 'Resources' section"
+  binary:
+    command: "cfn-lint template.yaml"
+    parser: generic-stderr
+    timeout: 30000
+    cwd: output
 
 permissions:
   filesystem: write
-  child_process: none
+  child_process: required
   network: none
 
 scope:
