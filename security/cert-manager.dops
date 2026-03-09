@@ -94,7 +94,7 @@ context:
     - Use DNS01 challenge solver for wildcard certificates (*.example.com)
     - Configure HTTP01 challenge with correct ingress class for standard single-domain certificates
     - Store ACME account key in privateKeySecretRef with a descriptive secret name
-    - Use ECDSA keys (algorithm: ECDSA, size: 256) for better performance unless RSA compatibility is required
+    - "Use ECDSA keys (algorithm: ECDSA, size: 256) for better performance unless RSA compatibility is required"
     - Specify explicit dnsNames or ipAddresses — avoid relying on commonName alone (deprecated in modern TLS)
     - Use separate issuers per environment (staging vs production) to avoid rate limit issues
     - Include usages field (digital signature, key encipherment, server auth) for explicit key usage
