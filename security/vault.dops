@@ -8,7 +8,7 @@ meta:
   description: "Generate HashiCorp Vault server and policy configurations"
   author: dojops
   license: MIT
-  tags: [secrets, vault, hashicorp, security, encryption]
+  tags: [secrets, vault, hashicorp, security, encryption, kv, pki, transit, dynamic-secrets, policy]
 
 context:
   technology: HashiCorp Vault
@@ -16,35 +16,154 @@ context:
   outputGuidance: |
     Generate valid HashiCorp Vault configuration in HCL format.
     Output raw HCL content directly — do NOT wrap in JSON or code fences.
-    The output must be valid HCL that Vault can parse for server config or policy definitions.
+    Use multi-document output (separated by clear comment headers) when generating multiple files.
+
+    Detect the configuration type from context and generate appropriate output:
+
+    1. **Vault policy** (default for "policy" requests): HCL policy files defining path-based
+       access control with capabilities. Validated with `vault policy fmt`.
+       ```
+       # Allow read access to KV v2 secrets for the app
+       path "secret/data/myapp/*" {
+         capabilities = ["read", "list"]
+       }
+
+       # Deny access to other application secrets
+       path "secret/data/otherapp/*" {
+         capabilities = ["deny"]
+       }
+       ```
+
+    2. **Server configuration**: HCL server config with listener, storage, seal, and API settings.
+       Used for vault server -config=<file>.
+       ```
+       listener "tcp" {
+         address       = "0.0.0.0:8200"
+         tls_cert_file = "/opt/vault/tls/server.crt"
+         tls_key_file  = "/opt/vault/tls/server.key"
+       }
+
+       storage "raft" {
+         path    = "/opt/vault/data"
+         node_id = "vault-1"
+       }
+
+       api_addr     = "https://vault.example.com:8200"
+       cluster_addr = "https://vault.example.com:8201"
+       ui           = true
+       ```
+
+    3. **Vault Agent configuration**: HCL config for Vault Agent auto-auth, caching, and template rendering.
+       ```
+       vault {
+         address = "https://vault.example.com:8200"
+       }
+
+       auto_auth {
+         method "kubernetes" {
+           mount_path = "auth/kubernetes"
+           config = {
+             role = "myapp"
+           }
+         }
+         sink "file" {
+           config = {
+             path = "/home/vault/.vault-token"
+           }
+         }
+       }
+
+       template {
+         source      = "/etc/vault/templates/config.ctmpl"
+         destination = "/etc/app/config.yaml"
+       }
+       ```
+
+    Policy HCL — capabilities reference:
+    - create: Create new data at the path (POST)
+    - read: Read data at the path (GET)
+    - update: Modify existing data at the path (PUT/POST)
+    - delete: Delete data at the path (DELETE)
+    - list: List entries at the path (LIST)
+    - sudo: Allows access to root-protected paths
+    - deny: Explicitly denies access (overrides all other capabilities)
+
+    Common policy path patterns:
+    - KV v2: "secret/data/<path>" (read), "secret/metadata/<path>" (list/delete)
+    - KV v1: "secret/<path>"
+    - PKI: "pki/issue/<role>" (create/update), "pki/certs" (list)
+    - Transit: "transit/encrypt/<key>" (update), "transit/decrypt/<key>" (update)
+    - Dynamic: "database/creds/<role>" (read)
+    - Auth: "auth/token/lookup-self" (read), "auth/token/renew-self" (update)
+    - Sys: "sys/policies/acl/*" (list/read), "sys/mounts" (read)
+    - Identity: "identity/entity/id/*" (read)
+
+    Server config — listener options:
+    - tcp: address, tls_cert_file, tls_key_file, tls_min_version, tls_disable
+    - Performance tuning: max_request_size, max_request_duration
+
+    Server config — storage backends:
+    - raft (recommended): path, node_id, retry_join for HA clustering
+    - consul: address, path, token
+    - file: path (development/single-node only)
+
+    Server config — seal options (auto-unseal):
+    - awskms: region, kms_key_id, access_key, secret_key (or IAM role)
+    - gcpckms: project, region, key_ring, crypto_key
+    - azurekeyvault: tenant_id, vault_name, key_name
+    - transit: address, mount_path, key_name (Vault transit seal)
+    - shamir: default manual unseal (no seal block needed)
+
+    Server config — telemetry (optional):
+    - prometheus_retention_time, statsite_address, statsd_address, dogstatsd_addr
+
+    Always include in server configs:
+    - TLS enabled on listener (tls_disable = false in production)
+    - api_addr and cluster_addr for HA setups
+    - Appropriate storage backend for the deployment model
   bestPractices:
     - Use least-privilege policies with explicit path-based access control
-    - Enable audit logging for all Vault operations
-    - Configure auto-unseal using cloud KMS (AWS KMS, GCP KMS, Azure Key Vault)
-    - Use namespaces for multi-tenant isolation in enterprise
-    - Set appropriate default and max TTLs for secrets and tokens
-    - Enable TLS for all listener endpoints
-    - Use integrated storage (Raft) for production deployments
-    - Always use least-privilege access with explicit deny where needed
     - Never grant root or sudo capabilities in application policies
     - Use path wildcards carefully — prefer explicit paths over broad globs
-    - Include token self-management paths for operational use
-    - Separate policies by team or service for clear access boundaries
+    - Enable TLS for all listener endpoints (tls_disable = false) in production
+    - Use auto-unseal via cloud KMS (AWS KMS, GCP KMS, Azure Key Vault) for production
+    - Enable audit logging with at least two audit backends for redundancy
+    - Use integrated storage (Raft) for production deployments with HA
+    - Set appropriate default_lease_ttl and max_lease_ttl for secrets and tokens
+    - Include token self-management paths (lookup-self, renew-self) in application policies
+    - Separate policies by team or service with clear naming conventions (team-app-role)
+    - Use deny capability explicitly to block sensitive paths for defense in depth
+    - Configure Vault Agent for automatic token renewal and secret templating in applications
+    - Use namespaces for multi-tenant isolation in Vault Enterprise
+    - Set max_request_size on listeners to prevent resource exhaustion
   context7Libraries:
     - name: vault
-      query: "Vault HCL configuration, policy syntax, server config, storage backend, auth methods, secrets engines"
+      query: "HashiCorp Vault HCL policy syntax path capabilities, server configuration listener storage seal options, Raft integrated storage HA setup, auto-unseal AWS KMS GCP Azure, Vault Agent auto-auth template rendering, audit backends file socket syslog, secrets engines KV PKI Transit dynamic credentials"
 
 files:
-  - path: "vault-config.hcl"
+  - path: "{outputPath}/vault-policy.hcl"
     format: raw
+    conditional: true
+  - path: "{outputPath}/vault-server.hcl"
+    format: raw
+    conditional: true
+  - path: "{outputPath}/vault-agent.hcl"
+    format: raw
+    conditional: true
+  - path: "{outputPath}/vault-audit.hcl"
+    format: raw
+    conditional: true
+  - path: "{outputPath}/vault-admin-policy.hcl"
+    format: raw
+    conditional: true
 
 detection:
-  paths: ["vault*.hcl", "vault/*.hcl"]
+  paths: ["vault*.hcl", "vault/*.hcl", "policies/*.hcl", "vault-policy*.hcl", "vault-server*.hcl", "vault-agent*.hcl"]
   updateMode: true
 
 verification:
   binary:
-    command: "vault policy fmt vault-config.hcl"
+    command: "vault policy fmt {entryFile}"
     parser: generic-stderr
     timeout: 30000
     cwd: output
@@ -55,7 +174,7 @@ permissions:
   network: none
 
 scope:
-  write: ["vault*.hcl", "vault/*.hcl"]
+  write: ["vault*.hcl", "vault/*.hcl", "policies/*.hcl", "**/*.hcl"]
 
 risk:
   level: HIGH
@@ -75,7 +194,7 @@ update:
 
 ## Prompt
 
-You are a HashiCorp Vault expert specializing in secrets management and security policy configuration.
+You are a HashiCorp Vault expert specializing in secrets management, policy authoring, and secure server configuration.
 
 {outputGuidance}
 
@@ -89,4 +208,6 @@ Project context: {projectContext}
 ## Keywords
 
 vault, hashicorp, secrets, secret-management, policy, hcl, token,
-auth, encryption, kms, pki, transit, kv
+auth, encryption, kms, pki, transit, kv, dynamic-secrets, raft,
+auto-unseal, agent, lease, capabilities, acl, audit, seal,
+listener, storage

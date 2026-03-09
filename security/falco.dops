@@ -5,60 +5,143 @@ kind: tool
 meta:
   name: falco
   version: 2.1.0
-  description: "Generate Falco runtime security rules"
+  description: "Generate Falco runtime security rules and configuration"
   author: dojops
   license: MIT
-  tags: [security, falco, runtime, detection, kubernetes]
+  tags: [security, falco, runtime, detection, kubernetes, syscall, threat-detection, container-security, sysdig, mitre]
 
 context:
   technology: Falco
   fileFormat: yaml
   outputGuidance: |
-    Generate valid Falco rules in YAML format.
+    Generate valid Falco rules or configuration in YAML format.
     Output raw YAML content directly — do NOT wrap in JSON or code fences.
-    The output must be valid Falco rules YAML with proper rule, macro, and list definitions.
+    Use multi-document YAML (--- separator) when generating both rules and configuration.
+
+    Detect the request type from context and generate appropriate output:
+    - **Custom rules file** (default): A YAML file containing rule, macro, and list definitions.
+    - **Main configuration**: A falco.yaml configuration file with engine, output, and rules_file settings.
+    - **Rule overrides**: A YAML file that appends to or overrides default Falco rules.
+
+    Falco rules YAML structure — a rules file is a flat YAML list of items, each being one of:
+
+    1. **rule**: A detection rule with required fields:
+       - rule: "Descriptive Rule Name"
+       - desc: "What this rule detects and why it matters"
+       - condition: Falco condition expression using syscall fields and macros
+       - output: Format string with %field placeholders for alert context
+       - priority: One of EMERGENCY, ALERT, CRITICAL, ERROR, WARNING, NOTICE, INFO, DEBUG
+       - tags: List of tags (mitre_execution, filesystem, network, process, container, k8s, pci, soc2, nist)
+       Optional: enabled (true/false), source (syscall/k8s_audit), append (true to extend existing rule)
+
+    2. **macro**: A reusable condition fragment:
+       - macro: macro_name
+       - condition: "field_expression"
+       Optional: append (true to extend existing macro)
+
+    3. **list**: A named group of values:
+       - list: list_name
+       - items: [value1, value2, ...]
+       Optional: append (true to extend existing list)
+
+    Condition syntax reference:
+    - Field comparisons: fd.name startswith /etc, proc.name = bash, container.id != host
+    - Logical operators: and, or, not
+    - Set membership: proc.name in (list_name), proc.name pmatch (pattern*)
+    - Syscall events: evt.type in (open, openat, creat), evt.dir = <
+    - Container awareness: container.id != host (only containers), k8s.ns.name = production
+    - Process lineage: proc.pname, proc.aname[2] for parent/grandparent matching
+
+    Output format string fields:
+    - Process: %proc.name, %proc.pid, %proc.pname, %proc.cmdline, %proc.exepath
+    - User: %user.name, %user.uid, %user.loginname
+    - Container: %container.id, %container.name, %container.image.repository
+    - Kubernetes: %k8s.ns.name, %k8s.pod.name, %k8s.deployment.name
+    - File: %fd.name, %fd.directory
+    - Event: %evt.type, %evt.time
+
+    Priority level guidance:
+    - EMERGENCY/ALERT: Active exploitation, rootkit, container escape
+    - CRITICAL: Privilege escalation, credential theft, reverse shell
+    - ERROR: Unauthorized file modification, suspicious binary execution
+    - WARNING: Unexpected network activity, configuration file reads
+    - NOTICE: Unusual but potentially legitimate activity
+    - INFO/DEBUG: Monitoring and auditing
+
+    Example rules file:
+    ```
+    - list: sensitive_dirs
+      items: [/etc/shadow, /etc/passwd, /etc/sudoers]
+
+    - macro: container_context
+      condition: container.id != host
+
+    - rule: Read Sensitive File in Container
+      desc: Detect reads of sensitive system files inside containers
+      condition: >
+        evt.type in (open, openat) and evt.dir = < and
+        fd.name in (sensitive_dirs) and container_context
+      output: >
+        Sensitive file read in container
+        (file=%fd.name user=%user.name container=%container.name
+        image=%container.image.repository pod=%k8s.pod.name)
+      priority: WARNING
+      tags: [filesystem, container, mitre_credential_access]
+    ```
   bestPractices:
-    - Use descriptive rule names that indicate the security concern
-    - Set appropriate priority levels (EMERGENCY, ALERT, CRITICAL, ERROR, WARNING, NOTICE, INFO, DEBUG)
-    - Define macros for reusable condition components
-    - Use lists for grouping related values (binaries, paths, users)
-    - Include output templates with relevant context fields
-    - Tag rules with applicable compliance frameworks (mitre, pci, soc2)
-    - Use append rules to extend default Falco rules without modifying them
-    - Use macros for reusable condition components
-    - Set priority based on security impact severity
-    - Include relevant context fields in output templates
-    - Tag rules with MITRE ATT&CK techniques where applicable
-    - Use lists to maintain groups of related values
+    - Use descriptive rule names that clearly indicate the security concern being detected
+    - Set priority levels based on actual security impact (CRITICAL for exploitation, WARNING for anomalies)
+    - Define macros for reusable condition components to keep rules DRY and maintainable
+    - Use lists for grouping related values (trusted binaries, sensitive paths, allowed users)
+    - Include comprehensive output templates with process, user, container, and Kubernetes context fields
+    - Tag rules with applicable compliance frameworks (mitre_*, pci, soc2, nist, hipaa)
+    - Use append rules to extend default Falco rules without modifying the upstream ruleset
+    - Scope rules to containers (container.id != host) unless host-level detection is intended
+    - Add enabled: false to noisy rules that may need tuning before deployment
+    - Include desc field on every rule explaining what it detects and why
+    - Use evt.dir = < for read events and evt.dir = > for write events to reduce false positives
+    - Group related rules, macros, and lists together for maintainability
+    - Test rules against known-good workloads to establish baseline before enabling in production
   context7Libraries:
     - name: falco
-      query: "Falco rules YAML syntax, macros, lists, conditions, output fields, priority levels"
+      query: "Falco rules YAML syntax for rule macro list definitions, condition field operators and syscall events, output format string fields, priority levels, append mode for extending default rules, k8s_audit source rules, Falco configuration falco.yaml options"
 
 files:
-  - path: "falco-rules.yaml"
+  - path: "{outputPath}/falco-rules.yaml"
     format: raw
+    conditional: true
+  - path: "{outputPath}/falco.yaml"
+    format: raw
+    conditional: true
+  - path: "{outputPath}/falco-overrides.yaml"
+    format: raw
+    conditional: true
+  - path: "{outputPath}/falco-rules-k8s-audit.yaml"
+    format: raw
+    conditional: true
 
 detection:
-  paths: ["falco-rules.yaml", "falco*.yaml"]
+  paths: ["falco-rules.yaml", "falco*.yaml", "falco/*.yaml", "falco-rules/*.yaml", "rules.d/*.yaml"]
   updateMode: true
 
 verification:
-  structural:
-    - path: "rule"
-      required: false
-      message: "General YAML validity check"
+  binary:
+    command: "falco --validate {entryFile}"
+    parser: generic-stderr
+    timeout: 30000
+    cwd: output
 
 permissions:
   filesystem: write
-  child_process: none
+  child_process: required
   network: none
 
 scope:
-  write: ["falco-rules.yaml", "falco*.yaml"]
+  write: ["falco-rules.yaml", "falco*.yaml", "falco/*.yaml", "falco-rules/*.yaml", "rules.d/*.yaml"]
 
 risk:
   level: LOW
-  rationale: "Falco rules are declarative detection rules requiring deployment"
+  rationale: "Falco rules are declarative detection rules requiring deployment to a Falco instance"
 
 execution:
   mode: generate
@@ -74,7 +157,7 @@ update:
 
 ## Prompt
 
-You are a runtime security expert specializing in Falco detection rules for containers and Kubernetes.
+You are a runtime security expert specializing in Falco detection rules for containers and Kubernetes environments.
 
 {outputGuidance}
 
@@ -88,4 +171,6 @@ Project context: {projectContext}
 ## Keywords
 
 falco, runtime-security, detection, rules, container-security,
-kubernetes, syscall, threat-detection, mitre, sysdig
+kubernetes, syscall, threat-detection, mitre, sysdig, macro,
+condition, priority, k8s-audit, anomaly-detection, intrusion-detection,
+compliance, incident-response, alert

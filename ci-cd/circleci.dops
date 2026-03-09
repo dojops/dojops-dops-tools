@@ -5,40 +5,150 @@ kind: tool
 meta:
   name: circleci
   version: 2.1.0
-  description: "Generate CircleCI pipeline configurations"
+  description: "Generate CircleCI pipeline configurations with orbs, workflows, executors, and reusable commands"
   author: dojops
   license: MIT
-  tags: [ci, cd, circleci, pipeline, workflow]
+  tags: [ci, cd, circleci, pipeline, workflow, orb, executor]
 
 context:
   technology: CircleCI
   fileFormat: yaml
   outputGuidance: |
-    Generate a complete, valid CircleCI configuration YAML file.
+    Generate a complete, valid CircleCI configuration YAML file using config version 2.1.
     Output raw YAML content directly — do NOT wrap in JSON or code fences.
-    The output must be a valid .circleci/config.yml using CircleCI 2.1 syntax.
+    The output must be a valid .circleci/config.yml that CircleCI can parse and execute.
+
+    === STRUCTURE REQUIREMENTS ===
+    The config MUST follow this structure (in order):
+    1. version: 2.1
+    2. orbs: (when using marketplace orbs — always prefer orbs for common integrations)
+    3. executors: (when defining reusable executors for multiple jobs)
+    4. commands: (when defining reusable command sequences shared across jobs)
+    5. jobs: (all job definitions with executor, steps, resource_class)
+    6. workflows: (workflow definitions with job ordering, filters, contexts)
+
+    === SIMPLE CONFIG ===
+    For basic CI pipelines (build + test):
+    version: 2.1
+    orbs:
+      node: circleci/node@5
+    jobs:
+      build-and-test:
+        executor: node/default
+        steps:
+          - checkout
+          - node/install-packages
+          - run:
+              name: Run tests
+              command: npm test
+    workflows:
+      main:
+        jobs:
+          - build-and-test
+
+    === COMPLEX CONFIG ===
+    For multi-environment deployments with approval gates:
+    version: 2.1
+    orbs:
+      node: circleci/node@5
+      aws-cli: circleci/aws-cli@4
+    executors:
+      default:
+        docker:
+          - image: cimg/node:20.11
+        resource_class: medium
+    commands:
+      install-and-build:
+        steps:
+          - checkout
+          - restore_cache:
+              keys:
+                - deps-v1-{{ checksum "package-lock.json" }}
+          - run: npm ci
+          - save_cache:
+              key: deps-v1-{{ checksum "package-lock.json" }}
+              paths:
+                - node_modules
+          - run: npm run build
+    jobs:
+      test:
+        executor: default
+        steps:
+          - install-and-build
+          - run: npm test
+          - store_test_results:
+              path: test-results
+      deploy:
+        executor: default
+        steps:
+          - install-and-build
+          - aws-cli/setup
+          - run: ./deploy.sh
+    workflows:
+      build-deploy:
+        jobs:
+          - test
+          - hold-deploy:
+              type: approval
+              requires:
+                - test
+              filters:
+                branches:
+                  only: main
+          - deploy:
+              requires:
+                - hold-deploy
+              context:
+                - aws-production
+
+    === RULES ===
+    - Always use version 2.1 (enables orbs, executors, commands, and parameters)
+    - Prefer orbs for common integrations (circleci/node, circleci/python, circleci/docker, circleci/aws-cli)
+    - Every job must specify an executor (docker image, machine, or macos)
+    - Use resource_class to right-size job compute (small, medium, large, xlarge)
+    - Use restore_cache/save_cache with checksum-based keys for dependency caching
+    - Use store_test_results for CircleCI test insights and timing-based splitting
+    - Use contexts for environment variable management — never inline secrets
+
+    Detect project type from context:
+    - Node.js: circleci/node orb, cimg/node image, npm/yarn/pnpm
+    - Python: circleci/python orb, cimg/python image, pip/poetry
+    - Java: cimg/openjdk image, Maven/Gradle commands
+    - Go: cimg/go image, go test -v ./...
+    - Docker: circleci/docker orb, DLC (Docker Layer Caching)
+    - Ruby: cimg/ruby image, bundle install, rspec
   bestPractices:
-    - Use CircleCI 2.1 config version with orbs for reusable components
-    - Cache dependencies (npm, pip, maven) for faster builds
-    - Use workspaces to share data between jobs in a workflow
-    - Define resource classes appropriate for workload size
-    - Use contexts for environment variable management across projects
-    - Implement workflow filters for branch/tag-based execution
-    - Use Docker layer caching for container build jobs
-    - Jobs must specify an executor (Docker, machine, or macos)
-    - Use orbs for common integrations instead of custom scripts
-    - Store test results for CircleCI insights
-    - Use workflow filters for branch-specific job execution
+    - Use CircleCI 2.1 config version to enable orbs, executors, commands, and parameters
+    - Cache dependencies with restore_cache/save_cache using checksum-based keys for reproducible builds
+    - Use workspaces (persist_to_workspace/attach_workspace) to share build artifacts between jobs
+    - Define resource_class (small, medium, large, xlarge) appropriate for each job's workload
+    - Use contexts for environment variable management across projects and workflows
+    - Implement workflow filters with branches.only/ignore and tags for controlled job execution
+    - Use Docker Layer Caching (DLC) for container build jobs to speed up docker build
+    - Store test results with store_test_results for CircleCI insights and intelligent test splitting
+    - Define reusable executors for consistent Docker images and environment across jobs
+    - Use reusable commands for shared step sequences to reduce duplication across jobs
+    - Use approval jobs (type: approval) as manual gates before production deployments
+    - Use matrix jobs with parameters for multi-version or multi-platform testing
+    - Use orbs for common integrations (node, python, docker, aws-cli) instead of custom scripts
+    - Set no_output_timeout for long-running steps that produce no output to prevent premature kills
   context7Libraries:
     - name: circleci
-      query: "CircleCI config.yml syntax, orbs, workflows, jobs, executors, caching"
+      query: "CircleCI config.yml version 2.1 syntax, orbs node python docker aws-cli, workflows jobs steps, executors docker machine macos resource_class, commands parameters, caching restore_cache save_cache checksum, workspaces persist_to_workspace, store_test_results store_artifacts, contexts approval jobs, matrix parameters, Docker Layer Caching DLC"
 
 files:
-  - path: ".circleci/config.yml"
+  - path: "{outputPath}/.circleci/config.yml"
     format: raw
+    conditional: true
+  - path: "{outputPath}/.circleci/continue-config.yml"
+    format: raw
+    conditional: true
+  - path: "{outputPath}/.circleci/test-deploy.yml"
+    format: raw
+    conditional: true
 
 detection:
-  paths: [".circleci/config.yml"]
+  paths: [".circleci/config.yml", ".circleci/*.yml", ".circleci/*.yaml"]
   updateMode: true
 
 verification:
@@ -50,7 +160,7 @@ verification:
       required: true
       message: "Missing required 'jobs' section"
   binary:
-    command: "circleci config validate .circleci/config.yml"
+    command: "circleci config validate {entryFile}"
     parser: generic-stderr
     timeout: 30000
     cwd: output
@@ -61,11 +171,11 @@ permissions:
   network: none
 
 scope:
-  write: [".circleci/config.yml"]
+  write: [".circleci/*.yml", ".circleci/*.yaml", ".circleci/**/*.yml"]
 
 risk:
   level: LOW
-  rationale: "CI/CD configuration changes require PR review"
+  rationale: "CI/CD configuration changes require PR review before taking effect"
 
 execution:
   mode: generate
@@ -81,7 +191,7 @@ update:
 
 ## Prompt
 
-You are a CI/CD expert specializing in CircleCI pipeline configurations.
+You are a CI/CD expert specializing in CircleCI pipeline configurations with deep knowledge of orbs, reusable executors, commands, and multi-workflow deployments.
 
 {outputGuidance}
 
@@ -95,4 +205,5 @@ Project context: {projectContext}
 ## Keywords
 
 circleci, circle, ci, cd, pipeline, workflow, orb, executor,
-continuous-integration, config.yml
+continuous-integration, config.yml, caching, workspace, context,
+approval, docker, resource-class, commands, parameters, matrix

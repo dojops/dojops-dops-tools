@@ -5,56 +5,196 @@ kind: tool
 meta:
   name: trivy-config
   version: 2.1.0
-  description: "Generate Trivy scanner configuration files"
+  description: "Generate Trivy security scanner configuration files"
   author: dojops
   license: MIT
-  tags: [security, trivy, scanning, vulnerability, sbom]
+  tags: [security, trivy, scanning, vulnerability, sbom, container-scanning, iac-scanning, misconfig, license-scanning, aquasecurity]
 
 context:
   technology: Trivy
   fileFormat: yaml
   outputGuidance: |
-    Generate a valid Trivy configuration in YAML format.
+    Generate valid Trivy configuration files in YAML format.
     Output raw YAML content directly — do NOT wrap in JSON or code fences.
-    The output must be a valid trivy.yaml configuration file.
+    Use multi-document YAML (--- separator) when generating both trivy.yaml and .trivyignore.yaml.
+
+    Detect the configuration scenario from context and generate appropriate output:
+
+    1. **trivy.yaml configuration** (default): The main Trivy configuration file controlling
+       scan behavior, severity filters, output format, and scanner selection.
+
+    2. **.trivyignore file**: Plain text file with CVE IDs to ignore (one per line),
+       with optional comments and expiration dates.
+
+    3. **.trivyignore.yaml file**: Structured ignore file with per-vulnerability metadata
+       (reason, expiration, applicable scanners).
+
+    4. **Complete setup**: All configuration files for a comprehensive scanning setup.
+
+    trivy.yaml structure:
+    ```
+    # Global settings
+    severity:
+      - CRITICAL
+      - HIGH
+    ignore-unfixed: true
+    timeout: 10m
+
+    # Scanner selection
+    scanners:
+      - vuln
+      - misconfig
+      - secret
+      - license
+
+    # Vulnerability scanner options
+    vulnerability:
+      type:
+        - os
+        - library
+      ignore-unfixed: true
+
+    # Misconfiguration scanner options
+    misconfiguration:
+      scanners:
+        - dockerfile
+        - kubernetes
+        - terraform
+        - cloudformation
+      severity:
+        - CRITICAL
+        - HIGH
+        - MEDIUM
+
+    # Secret scanner options
+    secret:
+      config: trivy-secret.yaml
+
+    # License scanner options
+    license:
+      full: true
+      forbidden:
+        - AGPL-3.0
+        - GPL-3.0
+
+    # Filtering
+    skip-dirs:
+      - node_modules
+      - .git
+      - vendor
+      - dist
+    skip-files:
+      - "**/*.test.js"
+
+    # Output
+    format: table
+    output: trivy-results.txt
+
+    # Database
+    db:
+      skip-update: false
+      light: false
+
+    # Cache
+    cache:
+      dir: .trivy-cache
+    ```
+
+    Scan types explained:
+    - **vuln**: Vulnerability scanning of OS packages and application dependencies.
+      Checks against NVD, vendor advisories, GitHub Security Advisories.
+    - **misconfig**: Infrastructure-as-Code misconfiguration detection.
+      Supports Dockerfile, Kubernetes, Terraform, CloudFormation, Helm, Ansible.
+    - **secret**: Scans for hardcoded secrets, API keys, passwords, tokens.
+      Uses regex patterns and entropy analysis.
+    - **license**: Identifies software licenses in dependencies.
+      Can flag forbidden or restricted licenses for compliance.
+
+    Severity levels: CRITICAL, HIGH, MEDIUM, LOW, UNKNOWN
+    Output formats: table, json, sarif, cyclonedx, spdx, spdx-json, github, cosign-vuln, template
+
+    .trivyignore (plain text format):
+    ```
+    # Accepted risk: low-severity OpenSSL issue, no fix available
+    # exp:2025-06-01
+    CVE-2024-12345
+
+    # False positive in test dependencies
+    CVE-2024-67890
+    ```
+
+    .trivyignore.yaml (structured format):
+    ```
+    vulnerabilities:
+      - id: CVE-2024-12345
+        statement: "Not exploitable in our configuration — TLS 1.3 only"
+        expires: 2025-06-01
+      - id: CVE-2024-67890
+        statement: "Test dependency only, not in production image"
+        expires: 2025-12-31
+    misconfigurations:
+      - id: AVD-DS-0002
+        statement: "Base image requires root for package installation stage"
+        paths:
+          - Dockerfile
+    ```
+
+    CI/CD integration patterns:
+    - Use --exit-code 1 with severity filter for pipeline gate
+    - Use SARIF format (--format sarif) for GitHub Code Scanning integration
+    - Use CycloneDX/SPDX format for SBOM generation and supply chain compliance
+    - Use --cache-dir for persistent caching across CI runs
   bestPractices:
-    - Set severity thresholds to filter noise (CRITICAL, HIGH)
-    - Configure ignore rules for accepted vulnerabilities with expiration dates
-    - Enable multiple scanners (vuln, misconfig, secret, license) as needed
-    - Use skip-dirs and skip-files to exclude irrelevant paths
-    - Configure output formats (table, json, sarif) for CI integration
-    - Set timeout appropriate for large image or filesystem scans
-    - Enable SBOM generation for supply chain security
-    - Set severity filter to reduce noise in CI pipelines
+    - Set severity filter to CRITICAL,HIGH for CI pipeline gates to reduce noise
     - Enable ignore-unfixed to skip vulnerabilities without available patches
-    - Configure skip-dirs for large dependency directories
-    - Set appropriate timeout for image scanning workloads
-    - Use SARIF format for integration with GitHub Code Scanning
+    - Configure skip-dirs for large dependency directories (node_modules, vendor, .git)
+    - Use SARIF output format for integration with GitHub Code Scanning and security dashboards
+    - Enable multiple scanners (vuln, misconfig, secret) for comprehensive coverage
+    - Set appropriate timeout (10m+) for large image or filesystem scans
+    - Use .trivyignore.yaml with expiration dates for accepted risks — never ignore indefinitely
+    - Include statement/reason for every ignored vulnerability for audit trail
+    - Generate SBOM (CycloneDX or SPDX) alongside vulnerability scans for supply chain visibility
+    - Configure license scanning with forbidden license list for open-source compliance
+    - Use --db-repository for air-gapped environments with mirrored vulnerability database
+    - Pin Trivy version in CI to ensure consistent scan results across runs
+    - Separate misconfig severity from vulnerability severity for appropriate thresholds
+    - Use template output format with custom Go templates for team-specific reporting
   context7Libraries:
     - name: trivy
-      query: "Trivy configuration YAML, scanner options, severity filters, ignore rules, output formats"
+      query: "Trivy configuration YAML trivy.yaml options, vulnerability misconfig secret license scanner configuration, .trivyignore and .trivyignore.yaml ignore file formats with expiration, severity filtering output formats SARIF CycloneDX SPDX, CI/CD integration patterns exit codes, cache and database management"
 
 files:
-  - path: "trivy.yaml"
+  - path: "{outputPath}/trivy.yaml"
     format: raw
+    conditional: true
+  - path: "{outputPath}/.trivyignore"
+    format: raw
+    conditional: true
+  - path: "{outputPath}/.trivyignore.yaml"
+    format: raw
+    conditional: true
+  - path: "{outputPath}/trivy-secret.yaml"
+    format: raw
+    conditional: true
 
 detection:
-  paths: ["trivy.yaml", ".trivy.yaml"]
+  paths: ["trivy.yaml", ".trivy.yaml", "trivy.yml", ".trivyignore", ".trivyignore.yaml", ".trivyignore.yml"]
   updateMode: true
 
 verification:
-  structural:
-    - path: "severity"
-      required: false
-      message: "General YAML validity check"
+  binary:
+    command: "trivy config --config {entryFile} --help || true"
+    parser: generic-stderr
+    timeout: 30000
+    cwd: output
 
 permissions:
   filesystem: write
-  child_process: none
+  child_process: required
   network: none
 
 scope:
-  write: ["trivy.yaml", ".trivy.yaml"]
+  write: ["trivy.yaml", ".trivy.yaml", "trivy.yml", ".trivyignore", ".trivyignore.yaml", ".trivyignore.yml", "trivy-secret.yaml"]
 
 risk:
   level: LOW
@@ -74,7 +214,7 @@ update:
 
 ## Prompt
 
-You are a security scanning expert specializing in Trivy vulnerability scanner configuration.
+You are a security scanning expert specializing in Trivy vulnerability scanner configuration and CI/CD security integration.
 
 {outputGuidance}
 
@@ -88,4 +228,6 @@ Project context: {projectContext}
 ## Keywords
 
 trivy, scanner, vulnerability, security, sbom, misconfig,
-container-scanning, iac-scanning, secret-scanning, aquasecurity
+container-scanning, iac-scanning, secret-scanning, aquasecurity,
+sarif, cyclonedx, spdx, license-scanning, severity, ignore,
+trivyignore, cve, supply-chain, compliance

@@ -68,7 +68,7 @@ detection:
 
 verification:
   binary:
-    command: "promtool check config prometheus.yml"
+    command: "promtool check config {entryFile}"
     parser: promtool
     timeout: 30000
     cwd: output

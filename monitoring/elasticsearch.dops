@@ -5,48 +5,94 @@ kind: tool
 meta:
   name: elasticsearch
   version: 2.1.0
-  description: "Generate Elasticsearch index templates and configurations"
+  description: "Generate Elasticsearch cluster configurations, index templates, ILM policies, and component templates"
   author: dojops
   license: MIT
-  tags: [search, elasticsearch, logging, index, mapping]
+  tags: [search, elasticsearch, elk, opensearch, logging, index, mapping, cluster, ilm, observability]
 
 context:
   technology: Elasticsearch
   fileFormat: json
   outputGuidance: |
-    Generate a valid Elasticsearch index template JSON configuration.
-    Output raw JSON content directly — do NOT wrap in code fences.
-    The output must be a valid Elasticsearch API-compatible JSON document.
+    Generate Elasticsearch configuration files as a JSON object with file paths as keys and file contents as string values.
+    Format: { "files": { "elasticsearch.yml": "content...", "index-template.json": "content...", "ilm-policy.json": "content..." } }
+    At least one file key is required. Files are optional based on the request:
+      - elasticsearch.yml — Cluster configuration (cluster.name, node settings, network, discovery, security)
+      - index-template.json — Index template with index_patterns, template (settings, mappings, aliases)
+      - ilm-policy.json — Index Lifecycle Management policy with phases (hot, warm, cold, frozen, delete)
+      - component-template.json — Reusable component template for composable index templates
+      - ingest-pipeline.json — Ingest pipeline with processors (grok, date, set, rename, geoip, user_agent)
+    Each JSON file must be a valid Elasticsearch API-compatible JSON document.
+    YAML files must be valid Elasticsearch configuration YAML.
+    Do NOT output raw YAML or JSON without the wrapper — use the JSON wrapper to enable multi-file output.
+
+    === CLUSTER CONFIG (elasticsearch.yml) ===
+    Key sections: cluster.name, node.name, node.roles, path.data, path.logs,
+    network.host, http.port, discovery.seed_hosts, cluster.initial_master_nodes,
+    xpack.security.enabled, xpack.security.transport.ssl, xpack.security.http.ssl.
+
+    === INDEX TEMPLATE (index-template.json) ===
+    Structure for composable templates (Elasticsearch 7.8+):
+      { "index_patterns": ["logs-*"], "template": { "settings": { ... }, "mappings": { "properties": { ... } } }, "priority": 100, "composed_of": ["component-1"], "_meta": { ... } }
+    Legacy format (pre-7.8): { "index_patterns": [...], "settings": { ... }, "mappings": { ... } }
+
+    === ILM POLICY (ilm-policy.json) ===
+    Structure: { "policy": { "phases": { "hot": { "min_age": "0ms", "actions": { "rollover": { "max_size": "50gb", "max_age": "30d" } } }, "warm": { ... }, "cold": { ... }, "delete": { "min_age": "90d", "actions": { "delete": {} } } } } }
+
+    === COMPONENT TEMPLATE (component-template.json) ===
+    Structure: { "template": { "settings": { ... }, "mappings": { ... } }, "_meta": { ... } }
+
+    Detect use case from context:
+    - **Logging**: ELK/EFK stack, log index templates with @timestamp, ILM for rotation
+    - **Search**: Custom analyzers, completion suggesters, search_analyzer vs analyzer
+    - **Time-series**: Date-based indices, rollover, ILM policies, data streams
+    - **Cluster setup**: Multi-node config, dedicated master/data/ingest nodes, security settings
+    - **Observability**: APM indices, metric indices, data streams, fleet integration
   bestPractices:
-    - Define explicit field mappings instead of relying on dynamic mapping
-    - Set appropriate shard and replica counts based on data volume
-    - Use index lifecycle management (ILM) policies for log rotation
-    - Configure refresh intervals based on indexing vs search priority
-    - Use keyword type for exact-match fields, text for full-text search
-    - Set date format explicitly for timestamp fields
-    - Use index aliases for zero-downtime reindexing
-    - Always define explicit mappings for known fields
-    - Use keyword type for fields used in aggregations and filtering
-    - Set appropriate shard count based on expected data volume
-    - Include @timestamp field with date type for time-series data
-    - Use ILM policies for automatic index lifecycle management
+    - Define explicit field mappings instead of relying on dynamic mapping for known fields
+    - Set appropriate shard count based on expected data volume (target 10-50GB per shard)
+    - Configure replica count based on availability requirements (1 replica minimum for production)
+    - Use Index Lifecycle Management (ILM) policies for automatic index rotation, warm/cold tiering, and deletion
+    - Configure refresh_interval based on indexing vs search priority (30s for logging, 1s for search)
+    - Use keyword type for exact-match and aggregation fields, text type for full-text search
+    - Set date format explicitly for timestamp fields (strict_date_optional_time or epoch_millis)
+    - Use index aliases for zero-downtime reindexing and routing
+    - Use composable index templates with component templates for reusable mapping fragments
+    - Enable xpack.security for production clusters with TLS on transport and HTTP layers
+    - Configure discovery.seed_hosts and cluster.initial_master_nodes for multi-node clusters
+    - Use data streams for append-only time-series data (logs, metrics, traces)
+    - Set total_fields.limit appropriately to prevent mapping explosion (default 1000)
+    - Configure ingest pipelines for data transformation at index time (grok, date parsing, enrichment)
   context7Libraries:
     - name: elasticsearch
-      query: "Elasticsearch index template, mappings, settings, ILM policy, shard configuration"
+      query: "Elasticsearch index template composable component template mappings settings, ILM policy phases hot warm cold delete rollover, elasticsearch.yml cluster configuration node roles discovery security, ingest pipeline processors grok date set, data streams time-series append-only, shard allocation replica settings"
 
 files:
-  - path: "elasticsearch/index-template.json"
+  - path: "{outputPath}/elasticsearch.yml"
     format: raw
+    conditional: true
+  - path: "{outputPath}/index-template.json"
+    format: raw
+    conditional: true
+  - path: "{outputPath}/ilm-policy.json"
+    format: raw
+    conditional: true
+  - path: "{outputPath}/component-template.json"
+    format: raw
+    conditional: true
+  - path: "{outputPath}/ingest-pipeline.json"
+    format: raw
+    conditional: true
 
 detection:
-  paths: ["elasticsearch/*.json"]
+  paths: ["elasticsearch.yml", "elasticsearch.yaml", "elasticsearch/*.json", "elasticsearch/*.yml", "*/elasticsearch.yml"]
   updateMode: true
 
 verification:
   structural:
     - path: "index_patterns"
-      required: true
-      message: "Index template must have 'index_patterns'"
+      required: false
+      message: "Index template should have 'index_patterns' defined"
 
 permissions:
   filesystem: write
@@ -54,11 +100,11 @@ permissions:
   network: none
 
 scope:
-  write: ["elasticsearch/*.json"]
+  write: ["elasticsearch.yml", "elasticsearch.yaml", "elasticsearch/*.json", "elasticsearch/*.yml", "**/*.json", "**/*.yml"]
 
 risk:
   level: LOW
-  rationale: "Index template changes apply to new indices only"
+  rationale: "Index template changes apply to new indices only; cluster config changes require restart"
 
 execution:
   mode: generate
@@ -74,7 +120,7 @@ update:
 
 ## Prompt
 
-You are an Elasticsearch expert specializing in index templates and cluster configuration.
+You are an Elasticsearch expert specializing in cluster configuration, index templates, ILM policies, mappings, and data management.
 
 {outputGuidance}
 
@@ -88,4 +134,6 @@ Project context: {projectContext}
 ## Keywords
 
 elasticsearch, elastic, index, template, mapping, search, logging,
-kibana, ilm, shard, replica, query, aggregation, elk
+kibana, ilm, shard, replica, query, aggregation, elk, cluster,
+component-template, data-stream, ingest-pipeline, opensearch,
+analyzers, security

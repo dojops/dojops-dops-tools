@@ -5,41 +5,115 @@ kind: tool
 meta:
   name: aws-cloudformation
   version: 2.1.0
-  description: "Generate AWS CloudFormation infrastructure templates"
+  description: "Generate AWS CloudFormation infrastructure templates with nested stacks and cross-stack references"
   author: dojops
   license: MIT
-  tags: [iac, aws, cloudformation, cloud, infrastructure]
+  tags: [iac, aws, cloudformation, cloud, infrastructure, stack, serverless]
 
 context:
   technology: AWS CloudFormation
-  fileFormat: yaml
+  fileFormat: json
   outputGuidance: |
-    Generate a complete, valid AWS CloudFormation template in YAML format.
-    Output raw YAML content directly — do NOT wrap in JSON or code fences.
-    The output must be a valid CloudFormation template with AWSTemplateFormatVersion.
-    Use YAML format (not JSON) for readability.
+    CRITICAL: You MUST output a JSON object with a "files" key. Each key in "files" is the exact file path, each value is the YAML content as a string.
+
+    Determine the template complexity from the user's request:
+
+    === TYPE 1: SINGLE TEMPLATE ===
+    Triggered by: simple resource requests, single-stack deployments
+    JSON key: "cloudformation/template.yaml"
+
+    EXAMPLE — single template:
+    {
+      "files": {
+        "cloudformation/template.yaml": "AWSTemplateFormatVersion: '2010-09-09'\nDescription: S3 bucket with versioning\n\nParameters:\n  Environment:\n    Type: String\n    Default: dev\n    AllowedValues: [dev, staging, prod]\n\nResources:\n  MyBucket:\n    Type: AWS::S3::Bucket\n    Properties:\n      BucketName: !Sub '${AWS::StackName}-${Environment}-data'\n      VersioningConfiguration:\n        Status: Enabled\n      Tags:\n        - Key: Environment\n          Value: !Ref Environment\n\nOutputs:\n  BucketArn:\n    Description: S3 bucket ARN\n    Value: !GetAtt MyBucket.Arn\n    Export:\n      Name: !Sub '${AWS::StackName}-BucketArn'"
+      }
+    }
+
+    === TYPE 2: MULTI-TEMPLATE / NESTED STACKS ===
+    Triggered by: "nested stacks", "multi-stack", complex architectures (VPC + compute + database)
+    Split into logical templates: network, compute, database, storage, iam, etc.
+
+    EXAMPLE — VPC + compute:
+    {
+      "files": {
+        "cloudformation/network.yaml": "AWSTemplateFormatVersion: '2010-09-09'\nDescription: VPC and networking resources\n\nParameters:\n  VpcCidr:\n    Type: String\n    Default: 10.0.0.0/16\n\nResources:\n  VPC:\n    Type: AWS::EC2::VPC\n    Properties:\n      CidrBlock: !Ref VpcCidr\n      EnableDnsHostnames: true\n      EnableDnsSupport: true\n\nOutputs:\n  VpcId:\n    Value: !Ref VPC\n    Export:\n      Name: !Sub '${AWS::StackName}-VpcId'",
+        "cloudformation/compute.yaml": "AWSTemplateFormatVersion: '2010-09-09'\nDescription: Compute resources\n\nParameters:\n  VpcId:\n    Type: String\n  InstanceType:\n    Type: String\n    Default: t3.micro\n\nResources:\n  WebServer:\n    Type: AWS::EC2::Instance\n    Properties:\n      InstanceType: !Ref InstanceType\n      SubnetId: !ImportValue NetworkStack-SubnetId"
+      }
+    }
+
+    === TYPE 3: SAM / SERVERLESS TEMPLATE ===
+    Triggered by: "serverless", "lambda", "SAM", "API Gateway"
+    Use Transform: AWS::Serverless-2016-10-31 and AWS::Serverless:: resource types.
+
+    === TYPE 4: UPDATING EXISTING TEMPLATE ===
+    When existing content is provided via {existingContent}, modify the existing YAML.
+    Keep existing resources, add or change only what the user requests.
+    The JSON key MUST match the existing file path.
+
+    === TEMPLATE STRUCTURE REQUIREMENTS ===
+    Every template MUST include these sections (in this order):
+    1. AWSTemplateFormatVersion: '2010-09-09'
+    2. Description — concise purpose of the template
+    3. Parameters — environment-specific values with Type, Default, AllowedValues, Description
+    4. Conditions — (when needed) environment-based logic
+    5. Resources — the infrastructure resources
+    6. Outputs — important attributes with Export for cross-stack references
+
+    Optional sections (when applicable):
+    - Metadata — AWS::CloudFormation::Interface for parameter grouping
+    - Mappings — region or environment lookup tables
+    - Transform — for SAM or macros
+
+    === RULES ===
+    - The JSON key is the EXACT file path where the file will be written
+    - Do NOT output raw YAML — always use the JSON wrapper { "files": { ... } }
+    - Use !Ref, !GetAtt, !Sub, !ImportValue for dynamic references — never hardcode ARNs or IDs
+    - No hardcoded AWS account IDs, credentials, or access keys
+    - Use !Sub with ${AWS::StackName} for globally unique naming
   bestPractices:
-    - Include AWSTemplateFormatVersion and Description at the top
-    - Use Parameters for environment-specific values with sensible defaults
-    - Define Outputs for cross-stack references and important resource attributes
-    - Use Conditions for environment-based resource creation
-    - Apply consistent tagging using AWS::CloudFormation::Stack tags
-    - Use !Ref, !GetAtt, and !Sub for dynamic references
-    - Organize resources logically with comments
-    - Use Parameters for all configurable values
-    - No hardcoded AWS account IDs or credentials
-    - Apply tags to all taggable resources
-    - Use !Sub for string interpolation with variable references
+    - Include AWSTemplateFormatVersion and a descriptive Description at the top of every template
+    - Use Parameters with Type, Default, AllowedValues, and Description for all configurable values
+    - Define Outputs with Export names for cross-stack references using Fn::ImportValue
+    - Use Conditions with Fn::Equals for environment-based resource creation (e.g., create NAT Gateway only in prod)
+    - Apply consistent tagging on all taggable resources using a Tags parameter or Mappings
+    - Use !Sub for string interpolation with ${AWS::StackName}, ${AWS::Region}, and parameter references
+    - Use Metadata AWS::CloudFormation::Interface to group and label parameters in the console
+    - Define DeletionPolicy (Retain or Snapshot) on stateful resources (RDS, S3, DynamoDB)
+    - Use UpdateReplacePolicy to control replacement behavior during stack updates
+    - Split large templates into nested stacks (AWS::CloudFormation::Stack) by logical concern
+    - Use cfn-lint and taskcat for template validation before deployment
+    - Enable termination protection on production stacks
+    - Use AWS::NoValue with Fn::If for conditional property values
+    - Use CreationPolicy and WaitCondition for resources that need initialization signals
   context7Libraries:
     - name: aws-cloudformation
-      query: "CloudFormation template syntax, resources, parameters, outputs, intrinsic functions, mappings"
+      query: "CloudFormation template syntax AWSTemplateFormatVersion, Resources Parameters Outputs Conditions Mappings, intrinsic functions Ref GetAtt Sub ImportValue Select Split, nested stacks AWS::CloudFormation::Stack, DeletionPolicy UpdateReplacePolicy, cross-stack references Export, Metadata AWS::CloudFormation::Interface, SAM Transform Serverless"
 
 files:
-  - path: "template.yaml"
+  - path: "{outputPath}/cloudformation/template.yaml"
     format: raw
+    conditional: true
+  - path: "{outputPath}/cloudformation/network.yaml"
+    format: raw
+    conditional: true
+  - path: "{outputPath}/cloudformation/compute.yaml"
+    format: raw
+    conditional: true
+  - path: "{outputPath}/cloudformation/database.yaml"
+    format: raw
+    conditional: true
+  - path: "{outputPath}/cloudformation/storage.yaml"
+    format: raw
+    conditional: true
+  - path: "{outputPath}/cloudformation/iam.yaml"
+    format: raw
+    conditional: true
+  - path: "{outputPath}/cloudformation/main.yaml"
+    format: raw
+    conditional: true
 
 detection:
-  paths: ["template.yaml", "cfn/*.yaml", "cloudformation/*.yaml"]
+  paths: ["cloudformation/*.yaml", "cloudformation/*.yml", "cfn/*.yaml", "cfn/*.yml", "template.yaml", "template.yml", "*.template.yaml"]
   updateMode: true
 
 verification:
@@ -51,7 +125,7 @@ verification:
       required: true
       message: "Missing required 'Resources' section"
   binary:
-    command: "cfn-lint template.yaml"
+    command: "cfn-lint {entryFile}"
     parser: generic-stderr
     timeout: 30000
     cwd: output
@@ -62,11 +136,11 @@ permissions:
   network: none
 
 scope:
-  write: ["template.yaml", "cfn/*.yaml"]
+  write: ["cloudformation/**/*.yaml", "cloudformation/**/*.yml", "cfn/**/*.yaml", "cfn/**/*.yml", "template.yaml"]
 
 risk:
   level: MEDIUM
-  rationale: "CloudFormation changes may create, modify, or delete AWS resources"
+  rationale: "CloudFormation changes may create, modify, or delete AWS resources when deployed"
 
 execution:
   mode: generate
@@ -82,7 +156,7 @@ update:
 
 ## Prompt
 
-You are an AWS CloudFormation expert. Generate production-ready CloudFormation templates.
+You are an AWS CloudFormation expert. Generate production-ready CloudFormation templates with proper parameterization, outputs, and cross-stack references.
 
 {outputGuidance}
 
@@ -96,4 +170,5 @@ Project context: {projectContext}
 ## Keywords
 
 cloudformation, cfn, aws, stack, template, infrastructure, iac,
-cloud, s3, ec2, vpc, rds, lambda, iam, sns, sqs
+cloud, s3, ec2, vpc, rds, lambda, iam, sns, sqs, nested-stack,
+serverless, sam, parameters, outputs, cross-stack

@@ -5,46 +5,103 @@ kind: tool
 meta:
   name: datadog
   version: 2.1.0
-  description: "Generate Datadog Agent integration configurations"
+  description: "Generate Datadog Agent configurations, custom checks, monitors, and APM settings"
   author: dojops
   license: MIT
-  tags: [monitoring, datadog, apm, metrics, logging]
+  tags: [monitoring, datadog, agent, apm, metrics, logging, custom-check, log-collection, observability]
 
 context:
   technology: Datadog
-  fileFormat: yaml
+  fileFormat: json
   outputGuidance: |
-    Generate a valid Datadog Agent integration configuration in YAML format.
-    Output raw YAML content directly — do NOT wrap in JSON or code fences.
-    The output must be a valid Datadog Agent conf.d YAML file.
+    Generate Datadog Agent configuration files as a JSON object with file paths as keys and file contents as string values.
+    Format: { "files": { "datadog.yaml": "content...", "conf.d/custom-check.yaml": "content...", "monitors.json": "content..." } }
+    The "datadog.yaml" or a "conf.d/*.yaml" key is always required. Other files are optional based on the request:
+      - datadog.yaml — Main Agent configuration with api_key placeholder, site, log collection, APM, process monitoring, dogstatsd settings
+      - conf.d/<integration>.yaml — Integration check configs (init_config + instances sections)
+      - conf.d/custom-check.yaml — Custom check definitions with init_config, instances, and logs sections
+      - monitors.json — Datadog monitor definitions as a JSON array of monitor objects (name, type, query, message, tags, thresholds)
+    Each YAML file content must be a valid Datadog Agent configuration file.
+    Do NOT output raw YAML — use the JSON wrapper to enable multi-file output.
+
+    === MAIN AGENT CONFIG (datadog.yaml) ===
+    Must include: api_key (use placeholder DD_API_KEY or ${DD_API_KEY}), site (e.g., datadoghq.com).
+    Common sections: logs_enabled, apm_config (enabled, env), process_config, dogstatsd_port, tags (env, service, team).
+
+    === INTEGRATION CHECK CONFIG (conf.d/*.yaml) ===
+    Structure:
+      init_config:
+        <global settings for the check>
+      instances:
+        - host: <value>
+          port: <value>
+          tags:
+            - env:<env>
+            - service:<service>
+      logs:
+        - type: file
+          path: /var/log/<service>/*.log
+          source: <source>
+
+    === MONITOR DEFINITIONS (monitors.json) ===
+    JSON array of monitor objects with: name, type (metric alert, service check, log alert, query alert),
+    query (Datadog query language), message (with @notification handles), tags, options.thresholds (critical, warning).
+
+    Detect monitoring target from context:
+    - **Infrastructure**: System checks (cpu, memory, disk, network), process monitoring
+    - **Application**: APM tracing, custom metrics via DogStatsD, service-level objectives
+    - **Containers**: Docker/Kubernetes autodiscovery, container tags, orchestrator integration
+    - **Database**: MySQL, PostgreSQL, Redis, MongoDB integrations with connection-level configs
+    - **Log collection**: File tailing, journald, container logs, log processing pipelines
+    - **Custom checks**: Agent checks with init_config, instances, Python-based custom checks
   bestPractices:
-    - Define instances with specific hosts and ports for each check
-    - Use tags consistently for filtering and aggregation in dashboards
-    - Configure log collection with proper source and service tags
-    - Set min_collection_interval based on metric granularity needs
-    - Use autodiscovery templates for containerized environments
-    - Configure custom metrics with appropriate metric types (gauge, count, rate)
-    - Enable APM tracing integration when applicable
-    - Never include plaintext passwords; use ENC[] or environment variables
-    - Tag all instances with env, service, and team
-    - Use SSL/TLS for all database and service connections
+    - Define instances with specific hosts, ports, and authentication for each integration check
+    - Use tags consistently across all configs for filtering (env, service, team, version)
+    - Configure log collection with proper source, service, and log_processing_rules
+    - Set min_collection_interval based on metric granularity needs (default 15s, range 1-600s)
+    - Use autodiscovery templates with ad_identifiers for containerized environments
+    - Configure custom metrics with appropriate metric types (gauge, count, rate, histogram)
+    - Enable APM tracing with apm_config.enabled and set env, service tags
+    - Never include plaintext API keys or passwords — use ENC[] syntax or environment variables
+    - Use SSL/TLS for all database and service connections (tls_verify, tls_ca_cert)
+    - Configure monitors with appropriate thresholds (warning and critical) and notification channels
+    - Set process_config.enabled to true for live process monitoring in production
+    - Use DogStatsD custom metrics with proper namespacing (company.app.metric_name)
+    - Configure log pipelines with parsing rules, category processors, and attribute remappers
+    - Set appropriate timeouts and retries for remote integrations (timeout, retries, min_collection_interval)
   context7Libraries:
     - name: datadog
-      query: "Datadog Agent configuration, integrations, custom checks, logs, APM, autodiscovery"
+      query: "Datadog Agent configuration datadog.yaml, integration check conf.d YAML structure init_config instances logs, custom checks Python Agent check, APM tracing setup apm_config, autodiscovery Kubernetes Docker ad_identifiers, monitor definitions metric alert query alert thresholds, DogStatsD custom metrics, log collection processing rules pipelines"
 
 files:
-  - path: "datadog/conf.d/custom-check.yaml"
+  - path: "{outputPath}/datadog.yaml"
     format: raw
+    conditional: true
+  - path: "{outputPath}/conf.d/custom-check.yaml"
+    format: raw
+    conditional: true
+  - path: "{outputPath}/conf.d/http_check.yaml"
+    format: raw
+    conditional: true
+  - path: "{outputPath}/conf.d/process.yaml"
+    format: raw
+    conditional: true
+  - path: "{outputPath}/monitors.json"
+    format: raw
+    conditional: true
+  - path: "{outputPath}/conf.d/logs.yaml"
+    format: raw
+    conditional: true
 
 detection:
-  paths: ["datadog/*.yaml", "datadog/conf.d/*.yaml"]
+  paths: ["datadog.yaml", "datadog/*.yaml", "datadog/conf.d/*.yaml", "conf.d/*.yaml", "datadog.yml"]
   updateMode: true
 
 verification:
   structural:
     - path: "instances"
-      required: true
-      message: "Datadog check must have an 'instances' section"
+      required: false
+      message: "Integration check should have an 'instances' section"
 
 permissions:
   filesystem: write
@@ -52,7 +109,7 @@ permissions:
   network: none
 
 scope:
-  write: ["datadog/*.yaml", "datadog/conf.d/*.yaml"]
+  write: ["datadog.yaml", "datadog/*.yaml", "datadog/conf.d/*.yaml", "conf.d/*.yaml", "monitors.json", "**/*.yaml"]
 
 risk:
   level: LOW
@@ -72,7 +129,7 @@ update:
 
 ## Prompt
 
-You are a Datadog expert specializing in Agent integration and monitoring configuration.
+You are a Datadog expert specializing in Agent configuration, integration checks, APM tracing, log collection, and monitor definitions.
 
 {outputGuidance}
 
@@ -86,4 +143,5 @@ Project context: {projectContext}
 ## Keywords
 
 datadog, dd-agent, monitoring, apm, metrics, logging, traces,
-integration, check, dashboard, alert, slo
+integration, check, dashboard, alert, slo, dogstatsd, custom-check,
+autodiscovery, monitor, log-collection, conf-d, agent

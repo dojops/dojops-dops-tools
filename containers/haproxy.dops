@@ -5,10 +5,10 @@ kind: tool
 meta:
   name: haproxy
   version: 2.1.0
-  description: "Generate HAProxy load balancer configurations"
+  description: "Generate HAProxy load balancer and reverse proxy configurations"
   author: dojops
   license: MIT
-  tags: [loadbalancer, haproxy, proxy, tcp, http]
+  tags: [loadbalancer, haproxy, proxy, tcp, http, load-balancer, high-availability, ssl-termination]
 
 context:
   technology: HAProxy
@@ -17,35 +17,86 @@ context:
     Generate a complete, valid HAProxy configuration file.
     Output raw HAProxy config content directly — do NOT wrap in JSON or code fences.
     The output must be a valid haproxy.cfg that `haproxy -c -f` validates.
-    Include global, defaults, frontend, and backend sections.
+
+    The configuration MUST include these four required sections in order:
+    1. **global**: Process-wide settings (daemon mode, logging, maxconn, SSL tuning, stats socket)
+    2. **defaults**: Default values inherited by all frontends/backends (mode, log, timeouts, options)
+    3. **frontend**: One or more listener definitions (bind address:port, ACL rules, use_backend routing)
+    4. **backend**: One or more server groups (balance algorithm, server entries, health checks)
+
+    Detect the use case from context and generate appropriately:
+    - **HTTP load balancer**: Frontend on port 80/443, ACLs for host/path routing, round-robin backends
+    - **TCP load balancer**: mode tcp, no HTTP processing, for databases/message queues/custom protocols
+    - **SSL termination**: bind *:443 ssl crt, redirect scheme https, HSTS header
+    - **API gateway**: Multiple ACLs (hdr, path_beg, path_end), use_backend per route, rate limiting
+    - **Multi-tier**: Separate frontends for public/internal traffic, chained backends
+    - **Stats dashboard**: listen stats block with bind, stats enable, stats auth, stats uri
+
+    Example minimal structure:
+      global
+          log /dev/log local0
+          maxconn 4096
+          daemon
+
+      defaults
+          mode http
+          log global
+          option httplog
+          option dontlognull
+          timeout connect 5s
+          timeout client 30s
+          timeout server 30s
+          retries 3
+
+      frontend http_front
+          bind *:80
+          default_backend http_back
+
+      backend http_back
+          balance roundrobin
+          option httpchk GET /health
+          server app1 10.0.0.1:8080 check inter 5s fall 3 rise 2
+          server app2 10.0.0.2:8080 check inter 5s fall 3 rise 2
   bestPractices:
-    - Set appropriate timeouts in defaults (connect, client, server)
-    - Use health checks on all backend servers
-    - Enable logging via syslog for monitoring and debugging
-    - Configure SSL/TLS termination with strong cipher suites
-    - Use ACLs for request routing based on paths or headers
-    - Enable stats page for monitoring (with authentication)
-    - Set maxconn limits to prevent resource exhaustion
-    - Always include global and defaults sections
-    - Set timeouts for connect, client, and server
-    - Enable health checks on all backend servers
-    - Use ACLs for path-based routing instead of multiple frontends
-    - Stats page must require authentication
+    - Set explicit timeouts in defaults (timeout connect 5s, timeout client 30s, timeout server 30s, timeout http-request 10s)
+    - Enable health checks on all backend servers with check, inter, fall, and rise parameters
+    - Configure logging via syslog (log /dev/log local0) and use option httplog for HTTP traffic
+    - Use SSL/TLS termination with strong cipher suites and ssl-default-bind-options no-sslv3 no-tlsv10 no-tlsv11
+    - Use ACLs (hdr, path_beg, path_end, src) for intelligent request routing instead of multiple frontends
+    - Enable stats page with authentication (stats auth user:password) for monitoring
+    - Set global maxconn and per-frontend/backend maxconn to prevent resource exhaustion
+    - Use balance algorithms appropriate to workload (roundrobin for stateless, leastconn for varied response times, source for sticky)
+    - Add option forwardfor to pass client IP via X-Forwarded-For header to backends
+    - Configure http-response set-header for security headers (X-Frame-Options, X-Content-Type-Options, Strict-Transport-Security)
+    - Use stick-table for rate limiting, connection tracking, and abuse prevention
+    - Set option httpchk with specific health check path and expected status code
+    - Use server-template for dynamic server scaling with DNS-based service discovery
+    - Enable option http-server-close for connection reuse and better performance under load
   context7Libraries:
     - name: haproxy
-      query: "HAProxy configuration, frontend, backend, ACLs, health checks, SSL termination, load balancing"
+      query: "HAProxy configuration global defaults frontend backend sections, ACL rules hdr path_beg routing, SSL termination bind ssl crt ciphers, health checks option httpchk check inter fall rise, load balancing algorithms roundrobin leastconn, stick-table rate limiting, stats page authentication, server-template DNS discovery"
 
 files:
-  - path: "haproxy.cfg"
+  - path: "{outputPath}/haproxy.cfg"
     format: raw
+    conditional: true
+  - path: "{outputPath}/haproxy.cfg.d/backends.cfg"
+    format: raw
+    conditional: true
+  - path: "{outputPath}/haproxy.cfg.d/frontends.cfg"
+    format: raw
+    conditional: true
+  - path: "{outputPath}/errors/503.http"
+    format: raw
+    conditional: true
 
 detection:
-  paths: ["haproxy.cfg"]
+  paths: ["haproxy.cfg", "haproxy/*.cfg", "haproxy.cfg.d/*.cfg"]
   updateMode: true
 
 verification:
   binary:
-    command: "haproxy -c -f haproxy.cfg"
+    command: "haproxy -c -f {entryFile}"
     parser: generic-stderr
     timeout: 30000
     cwd: output
@@ -56,11 +107,11 @@ permissions:
   network: none
 
 scope:
-  write: ["haproxy.cfg"]
+  write: ["haproxy.cfg", "haproxy/*.cfg", "haproxy.cfg.d/*.cfg", "errors/*.http"]
 
 risk:
   level: MEDIUM
-  rationale: "Load balancer changes affect traffic routing and availability"
+  rationale: "Load balancer changes affect traffic routing, availability, and SSL termination"
 
 execution:
   mode: generate
@@ -76,7 +127,7 @@ update:
 
 ## Prompt
 
-You are an HAProxy expert specializing in load balancer and reverse proxy configurations.
+You are an HAProxy expert specializing in load balancing, reverse proxying, SSL termination, and high-availability configurations.
 
 {outputGuidance}
 
@@ -90,4 +141,5 @@ Project context: {projectContext}
 ## Keywords
 
 haproxy, loadbalancer, load-balancer, proxy, reverse-proxy, tcp,
-http, frontend, backend, acl, health-check, round-robin, ssl
+http, frontend, backend, acl, health-check, round-robin, ssl,
+high-availability, stick-table, rate-limit, stats, maxconn

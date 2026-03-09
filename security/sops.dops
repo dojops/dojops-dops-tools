@@ -8,7 +8,7 @@ meta:
   description: "Generate SOPS encrypted secrets configuration"
   author: dojops
   license: MIT
-  tags: [secrets, sops, encryption, gitops, security]
+  tags: [secrets, sops, encryption, gitops, security, age, pgp, aws-kms, gcp-kms, azure-keyvault]
 
 context:
   technology: SOPS
@@ -16,30 +16,117 @@ context:
   outputGuidance: |
     Generate a valid SOPS configuration in YAML format.
     Output raw YAML content directly — do NOT wrap in JSON or code fences.
-    The output must be a valid .sops.yaml configuration file for Mozilla SOPS.
+    Use multi-document YAML (--- separator) when generating both .sops.yaml config and example encrypted file templates.
+
+    Detect the secrets management scenario from context and generate appropriate output:
+
+    1. **.sops.yaml configuration** (default): The creation rules configuration file that tells SOPS
+       which keys to use for encrypting files matching specific path patterns.
+
+    2. **Example encrypted file templates**: Skeleton YAML/JSON/ENV files showing the structure
+       of files that SOPS will encrypt (with placeholder values, NOT real secrets).
+
+    3. **Both**: Configuration plus example templates when the user needs a complete setup.
+
+    .sops.yaml structure:
+    ```
+    creation_rules:
+      - path_regex: environments/production/.*\.yaml$
+        encrypted_regex: "^(password|secret|token|key|api_key|private)$"
+        key_groups:
+          - aws_kms:
+              - arn: arn:aws:kms:us-east-1:123456789:key/abcd-1234
+            age:
+              - age1ql3z7hjy54pw3hyww5ayyfg7zqgvc7w3j2elw8zmrj2kg5sfn9aqmcac8p
+      - path_regex: environments/staging/.*\.yaml$
+        age: age1ql3z7hjy54pw3hyww5ayyfg7zqgvc7w3j2elw8zmrj2kg5sfn9aqmcac8p
+      - path_regex: \.env(\..+)?$
+        pgp: FBC7B9E2A4F9289AC0C1D4843D16CEE4A27381B4
+    ```
+
+    Key provider options (configure based on environment):
+    - **age**: Lightweight, file-based keys. Best for local development and small teams.
+      Format: age public key string. Key file at SOPS_AGE_KEY_FILE or ~/.config/sops/age/keys.txt
+    - **AWS KMS**: Enterprise. Requires arn field with full KMS key ARN.
+      Supports role and context for cross-account access and encryption context.
+    - **GCP KMS**: Enterprise. Requires resource_id in format
+      projects/PROJECT/locations/LOCATION/keyRings/KEYRING/cryptoKeys/KEY
+    - **Azure Key Vault**: Enterprise. Requires vaultUrl and key name/version.
+    - **PGP**: Legacy but widely supported. Requires fingerprint string.
+    - **HashiCorp Vault Transit**: Requires engine_path, key_name, and address.
+
+    creation_rules fields:
+    - path_regex: Regular expression matching file paths (first match wins)
+    - encrypted_regex: Regex for YAML/JSON keys to encrypt (only matching keys are encrypted)
+    - encrypted_suffix: Alternative to encrypted_regex — encrypt keys ending with this suffix
+    - unencrypted_regex: Inverse — encrypt everything EXCEPT matching keys
+    - unencrypted_suffix: Inverse suffix-based variant
+    - key_groups: List of key groups for threshold decryption (shamir)
+    - shamir_threshold: Number of key groups needed to decrypt (defaults to all)
+    - age / aws_kms / gcp_kms / azure_kv / pgp: Key specifications (can use multiple)
+
+    key_groups for threshold-based decryption:
+    ```
+    key_groups:
+      - aws_kms:
+          - arn: arn:aws:kms:us-east-1:...
+        age:
+          - age1...
+      - aws_kms:
+          - arn: arn:aws:kms:eu-west-1:...
+        age:
+          - age1...
+    shamir_threshold: 1
+    ```
+
+    Rules ordering: Most specific path_regex patterns FIRST (first match wins).
+    Example order: production → staging → development → catch-all default.
+
+    Example encrypted file template (NOT real secrets):
+    ```
+    # secrets.yaml — encrypt with: sops -e -i secrets.yaml
+    database:
+      password: CHANGE_ME
+      connection_string: CHANGE_ME
+    api:
+      secret_key: CHANGE_ME
+      token: CHANGE_ME
+    ```
   bestPractices:
-    - Define creation_rules with path-based patterns for different environments
-    - Use multiple KMS keys for key redundancy and disaster recovery
-    - Configure encrypted_regex to selectively encrypt only secret values
-    - Use age keys for local development, cloud KMS for production
-    - Set key groups for threshold-based decryption requirements
-    - Organize rules from most specific to least specific (first match wins)
-    - Include PGP or age keys as backup decryption methods
-    - Order creation_rules from most specific to least specific
-    - Use encrypted_regex to avoid encrypting non-secret fields
-    - Include at least one backup decryption key (age or PGP)
-    - Never include actual secret values in the SOPS config file
-    - Use cloud KMS for production environments
+    - Order creation_rules from most specific to least specific path_regex (first match wins)
+    - Use encrypted_regex to selectively encrypt only secret values, preserving readable structure
+    - Use age keys for local development — lightweight, no cloud dependency
+    - Use cloud KMS (AWS/GCP/Azure) for production environments with IAM-based access control
+    - Configure key_groups with multiple providers for key redundancy and disaster recovery
+    - Set shamir_threshold to allow decryption even if one key provider is unavailable
+    - Include at least one backup decryption key (age or PGP) alongside cloud KMS
+    - Never include actual secret values in the .sops.yaml configuration file
+    - Use path_regex patterns matching your directory structure (environments/prod/, environments/staging/)
+    - Configure encrypted_suffix: _secret as an alternative to encrypted_regex for simpler key naming
+    - Pin SOPS version in CI/CD to ensure consistent encryption behavior across environments
+    - Use separate KMS keys per environment to enforce access isolation
+    - Store age private keys outside the repository (SOPS_AGE_KEY_FILE environment variable)
+    - Use unencrypted_regex for files where most fields are secret and only a few are public
   context7Libraries:
     - name: sops
-      query: "SOPS .sops.yaml configuration, creation_rules, KMS, age, PGP, encrypted_regex"
+      query: "SOPS .sops.yaml creation_rules configuration, encrypted_regex and path_regex patterns, key_groups with shamir threshold, age PGP AWS KMS GCP KMS Azure Key Vault provider configuration, sops encrypt decrypt edit commands, MAC verification and integrity"
 
 files:
-  - path: ".sops.yaml"
+  - path: "{outputPath}/.sops.yaml"
     format: raw
+    conditional: true
+  - path: "{outputPath}/secrets.yaml"
+    format: raw
+    conditional: true
+  - path: "{outputPath}/secrets.env"
+    format: raw
+    conditional: true
+  - path: "{outputPath}/secrets.json"
+    format: raw
+    conditional: true
 
 detection:
-  paths: [".sops.yaml"]
+  paths: [".sops.yaml", "**/.sops.yaml"]
   updateMode: true
 
 verification:
@@ -54,7 +141,7 @@ permissions:
   network: none
 
 scope:
-  write: [".sops.yaml"]
+  write: [".sops.yaml", "**/.sops.yaml", "secrets.yaml", "secrets.env", "secrets.json", "**/secrets.*"]
 
 risk:
   level: LOW
@@ -74,7 +161,7 @@ update:
 
 ## Prompt
 
-You are a secrets management expert specializing in Mozilla SOPS encrypted configuration.
+You are a secrets management expert specializing in Mozilla SOPS encrypted configuration for GitOps workflows.
 
 {outputGuidance}
 
@@ -88,4 +175,6 @@ Project context: {projectContext}
 ## Keywords
 
 sops, secrets, encryption, mozilla-sops, kms, age, pgp, gitops,
-encrypted-secrets, yaml, json, env, dotenv
+encrypted-secrets, yaml, json, env, dotenv, creation-rules,
+path-regex, encrypted-regex, key-groups, shamir, aws-kms,
+gcp-kms, azure-keyvault, vault-transit

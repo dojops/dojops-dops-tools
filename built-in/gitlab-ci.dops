@@ -58,7 +58,7 @@ verification:
       minItems: 1
       message: "Pipeline must define at least one stage"
   binary:
-    command: "yamllint -d relaxed .gitlab-ci.yml"
+    command: "yamllint -d relaxed {entryFile}"
     parser: generic-stderr
     timeout: 30000
     cwd: output

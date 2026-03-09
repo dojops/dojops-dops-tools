@@ -5,47 +5,125 @@ kind: tool
 meta:
   name: pulumi
   version: 2.1.0
-  description: "Generate Pulumi infrastructure-as-code in TypeScript"
+  description: "Generate Pulumi infrastructure-as-code projects in TypeScript with multi-file structure"
   author: dojops
   license: MIT
-  tags: [iac, cloud, pulumi, typescript, infrastructure]
+  tags: [iac, cloud, pulumi, typescript, infrastructure, aws, gcp, azure]
 
 context:
   technology: Pulumi
-  fileFormat: raw
+  fileFormat: json
   outputGuidance: |
-    Generate valid Pulumi TypeScript infrastructure code.
-    Output raw TypeScript content directly — do NOT wrap in JSON or code fences.
-    The output must be a valid index.ts file that pulumi can execute.
-    Use @pulumi/pulumi and appropriate provider packages (@pulumi/aws, @pulumi/gcp, etc.).
+    CRITICAL: You MUST output a JSON object with a "files" key. Each key in "files" is the exact file path, each value is the file content as a string.
+
+    Determine the project complexity from the user's request:
+
+    === TYPE 1: SIMPLE PROJECT ===
+    Triggered by: simple resource requests, single-provider setups
+    Generate: index.ts + Pulumi.yaml (minimum viable project).
+
+    EXAMPLE — simple AWS S3 bucket:
+    {
+      "files": {
+        "index.ts": "import * as pulumi from \"@pulumi/pulumi\";\nimport * as aws from \"@pulumi/aws\";\n\nconst config = new pulumi.Config();\nconst environment = config.require(\"environment\");\nconst projectName = pulumi.getProject();\n\nconst bucket = new aws.s3.Bucket(\"data-bucket\", {\n  bucket: `${projectName}-${environment}-data`,\n  acl: \"private\",\n  versioning: {\n    enabled: true,\n  },\n  serverSideEncryptionConfiguration: {\n    rule: {\n      applyServerSideEncryptionByDefault: {\n        sseAlgorithm: \"AES256\",\n      },\n    },\n  },\n  tags: {\n    Environment: environment,\n    ManagedBy: \"pulumi\",\n    Project: projectName,\n  },\n});\n\nexport const bucketName = bucket.bucket;\nexport const bucketArn = bucket.arn;",
+        "Pulumi.yaml": "name: my-infra\nruntime: nodejs\ndescription: Infrastructure managed by Pulumi",
+        "Pulumi.dev.yaml": "config:\n  my-infra:environment: dev"
+      }
+    }
+
+    === TYPE 2: MULTI-FILE PROJECT ===
+    Triggered by: complex architectures, multiple resource types, "VPC + compute + database"
+    Split into logical modules: index.ts (entry), vpc.ts, compute.ts, database.ts, config.ts, etc.
+
+    EXAMPLE — multi-file AWS project:
+    {
+      "files": {
+        "index.ts": "import { vpc, publicSubnetIds, privateSubnetIds } from \"./vpc\";\nimport { cluster } from \"./compute\";\nimport { db } from \"./database\";\n\nexport const vpcId = vpc.id;\nexport const clusterEndpoint = cluster.endpoint;\nexport const dbEndpoint = db.endpoint;\nexport const publicSubnets = publicSubnetIds;\nexport const privateSubnets = privateSubnetIds;",
+        "vpc.ts": "import * as pulumi from \"@pulumi/pulumi\";\nimport * as aws from \"@pulumi/aws\";\nimport { tags } from \"./config\";\n\nexport const vpc = new aws.ec2.Vpc(\"main\", {\n  cidrBlock: \"10.0.0.0/16\",\n  enableDnsHostnames: true,\n  enableDnsSupport: true,\n  tags: { ...tags, Name: \"main-vpc\" },\n});\n\nconst publicSubnets: aws.ec2.Subnet[] = [];\nconst privateSubnets: aws.ec2.Subnet[] = [];\nconst azs = [\"a\", \"b\", \"c\"];\n\nazs.forEach((az, i) => {\n  publicSubnets.push(new aws.ec2.Subnet(`public-${az}`, {\n    vpcId: vpc.id,\n    cidrBlock: `10.0.${i}.0/24`,\n    availabilityZone: `us-east-1${az}`,\n    mapPublicIpOnLaunch: true,\n    tags: { ...tags, Name: `public-${az}` },\n  }));\n  privateSubnets.push(new aws.ec2.Subnet(`private-${az}`, {\n    vpcId: vpc.id,\n    cidrBlock: `10.0.${i + 10}.0/24`,\n    availabilityZone: `us-east-1${az}`,\n    tags: { ...tags, Name: `private-${az}` },\n  }));\n});\n\nexport const publicSubnetIds = publicSubnets.map(s => s.id);\nexport const privateSubnetIds = privateSubnets.map(s => s.id);",
+        "config.ts": "import * as pulumi from \"@pulumi/pulumi\";\n\nconst config = new pulumi.Config();\n\nexport const environment = config.require(\"environment\");\nexport const projectName = pulumi.getProject();\nexport const tags = {\n  Environment: environment,\n  ManagedBy: \"pulumi\",\n  Project: projectName,\n};",
+        "Pulumi.yaml": "name: my-infra\nruntime: nodejs\ndescription: Multi-tier AWS infrastructure managed by Pulumi",
+        "Pulumi.dev.yaml": "config:\n  my-infra:environment: dev\n  aws:region: us-east-1",
+        "tsconfig.json": "{\n  \"compilerOptions\": {\n    \"strict\": true,\n    \"outDir\": \"bin\",\n    \"target\": \"es2020\",\n    \"module\": \"commonjs\",\n    \"moduleResolution\": \"node\",\n    \"sourceMap\": true,\n    \"experimentalDecorators\": true,\n    \"pretty\": true,\n    \"noFallthroughCasesInSwitch\": true,\n    \"noImplicitReturns\": true,\n    \"forceConsistentCasingInFileNames\": true\n  },\n  \"files\": [\"index.ts\"]\n}"
+      }
+    }
+
+    === TYPE 3: COMPONENT RESOURCE ===
+    Triggered by: "component", "reusable module", "custom resource class"
+    Generate a ComponentResource class in its own file with typed args interface.
+
+    === TYPE 4: UPDATING EXISTING CODE ===
+    When existing content is provided via {existingContent}, modify the existing TypeScript.
+    Keep existing resources/exports, add or change only what the user requests.
+    The JSON key MUST match the existing file path.
+
+    === RULES ===
+    - The JSON key is the EXACT file path where the file will be written
+    - Do NOT output raw TypeScript — always use the JSON wrapper { "files": { ... } }
+    - Always import from @pulumi/pulumi and the appropriate provider package
+    - Use pulumi.Config for all environment-specific values — never hardcode
+    - Export all important resource attributes as stack outputs from index.ts
+    - Use proper TypeScript types — avoid 'any'
+    - Use descriptive resource names (first argument to resource constructors)
+    - Apply consistent tags using a shared tags object
+
+    Detect cloud provider from context:
+    - AWS: @pulumi/aws, VPC, EC2, S3, RDS, Lambda, ECS, EKS
+    - GCP: @pulumi/gcp, Compute, GKE, Cloud SQL, Cloud Storage
+    - Azure: @pulumi/azure-native, VNet, AKS, SQL Server, Storage Account
+    - Kubernetes: @pulumi/kubernetes, Deployment, Service, Ingress
+    - Multi-cloud: Multiple provider imports, abstracting via ComponentResource
   bestPractices:
-    - Use strongly-typed resource inputs with TypeScript interfaces
-    - Export stack outputs for cross-stack references
-    - Use Pulumi Config for environment-specific values
-    - Apply consistent tags using helper functions
-    - Use ComponentResource for logical groupings of related resources
-    - Handle async operations properly with pulumi.output
-    - Use stack references for multi-stack architectures
-    - Use TypeScript with proper type annotations
-    - Export all important resource attributes as stack outputs
-    - No hardcoded credentials or secrets in code
-    - Use pulumi.Config for environment-specific values
-    - Import only the required provider packages
+    - Use strongly-typed resource inputs with TypeScript interfaces for ComponentResource args
+    - Export stack outputs from index.ts for all important resource attributes (IDs, endpoints, ARNs)
+    - Use pulumi.Config for all environment-specific values — never hardcode regions, instance types, or counts
+    - Apply consistent tags across all resources using a shared tags object or helper function
+    - Use ComponentResource for logical groupings of related resources (VPC + subnets, ECS cluster + services)
+    - Handle async operations properly with pulumi.output and pulumi.all for combining multiple outputs
+    - Use stack references (pulumi.StackReference) for cross-stack data sharing in multi-stack architectures
+    - Split large projects into logical files (vpc.ts, compute.ts, database.ts, config.ts) for maintainability
+    - Use Pulumi.dev.yaml / Pulumi.prod.yaml for environment-specific configuration values
+    - Import only the required provider packages to minimize dependencies and build time
+    - Use explicit resource options (dependsOn, protect, ignoreChanges) for controlling resource lifecycle
+    - Enable strict TypeScript compiler options (strict: true, noImplicitReturns) in tsconfig.json
+    - Use pulumi.secret() for sensitive config values that must be encrypted in state
+    - Name resources descriptively using the first constructor argument — names appear in the Pulumi dashboard
   context7Libraries:
     - name: pulumi
-      query: "Pulumi TypeScript SDK, resource creation, stack outputs, config, component resources"
+      query: "Pulumi TypeScript SDK resource creation import pulumi aws gcp azure kubernetes, Config stack outputs exports, ComponentResource custom resources typed args, StackReference cross-stack, resource options dependsOn protect ignoreChanges parent, pulumi.output pulumi.all interpolation, Pulumi.yaml project configuration runtime nodejs, provider configuration multi-region multi-account"
 
 files:
-  - path: "index.ts"
+  - path: "{outputPath}/index.ts"
     format: raw
+    conditional: true
+  - path: "{outputPath}/Pulumi.yaml"
+    format: raw
+    conditional: true
+  - path: "{outputPath}/Pulumi.dev.yaml"
+    format: raw
+    conditional: true
+  - path: "{outputPath}/Pulumi.prod.yaml"
+    format: raw
+    conditional: true
+  - path: "{outputPath}/tsconfig.json"
+    format: raw
+    conditional: true
+  - path: "{outputPath}/config.ts"
+    format: raw
+    conditional: true
+  - path: "{outputPath}/vpc.ts"
+    format: raw
+    conditional: true
+  - path: "{outputPath}/compute.ts"
+    format: raw
+    conditional: true
 
 detection:
-  paths: ["Pulumi.yaml", "Pulumi.*.yaml"]
+  paths: ["Pulumi.yaml", "Pulumi.*.yaml", "index.ts"]
   updateMode: true
 
 verification:
   binary:
-    command: "npx tsc --noEmit"
+    command: "npx tsc --noEmit {entryFile}"
     parser: generic-stderr
     timeout: 60000
     cwd: output
@@ -56,11 +134,11 @@ permissions:
   network: none
 
 scope:
-  write: ["index.ts", "*.ts"]
+  write: ["*.ts", "**/*.ts", "Pulumi.yaml", "Pulumi.*.yaml", "tsconfig.json", "package.json"]
 
 risk:
   level: MEDIUM
-  rationale: "Infrastructure changes may affect cloud resources"
+  rationale: "Infrastructure code changes may create, modify, or delete cloud resources when deployed"
 
 execution:
   mode: generate
@@ -76,7 +154,7 @@ update:
 
 ## Prompt
 
-You are a Pulumi expert specializing in TypeScript infrastructure-as-code.
+You are a Pulumi expert specializing in TypeScript infrastructure-as-code with deep knowledge of AWS, GCP, Azure, and Kubernetes providers.
 
 {outputGuidance}
 
@@ -90,4 +168,5 @@ Project context: {projectContext}
 ## Keywords
 
 pulumi, iac, infrastructure, cloud, typescript, aws, gcp, azure,
-stack, resource, component, config, output
+stack, resource, component, config, output, provider, kubernetes,
+stack-reference, component-resource, multi-cloud, serverless

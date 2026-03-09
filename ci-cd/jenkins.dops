@@ -5,60 +5,121 @@ kind: tool
 meta:
   name: jenkins
   version: 2.1.0
-  description: "Generate declarative Jenkinsfile pipeline configurations"
+  description: "Generate Jenkins Configuration as Code (JCasC) and Job DSL configurations"
   author: dojops
   license: MIT
-  tags: [ci, cd, jenkins, pipeline, groovy]
+  tags: [jenkins, jcasc, configuration-as-code, job-dsl, groovy, ci, cd]
 
 context:
-  technology: Jenkins
-  fileFormat: raw
+  technology: Jenkins Configuration as Code
+  fileFormat: json
   outputGuidance: |
-    Generate a complete, valid declarative Jenkinsfile.
-    Output raw Groovy content directly — do NOT wrap in JSON or code fences.
-    The output must be a valid Jenkinsfile that Jenkins can parse.
-    Use the declarative pipeline syntax (pipeline { ... }) unless scripted is explicitly requested.
+    CRITICAL: You MUST output a JSON object with a "files" key. Each key in "files" is the exact file path, each value is the file content as a string.
+
+    This module generates Jenkins Configuration as Code (JCasC) YAML and Job DSL Groovy — NOT Jenkinsfiles.
+    Jenkinsfile pipeline syntax is handled by the built-in jenkinsfile module.
+
+    Determine the configuration type from the user's request:
+
+    === TYPE 1: JCasC CONFIGURATION ===
+    Triggered by: "Jenkins config", "JCasC", "configuration as code", "jenkins.yaml", "setup Jenkins"
+    JSON key MUST be: "jenkins.yaml"
+    The YAML must follow JCasC structure: jenkins, security, credentials, unclassified, tool, jobs.
+
+    EXAMPLE — JCasC configuration:
+    {
+      "files": {
+        "jenkins.yaml": "jenkins:\n  systemMessage: \"Jenkins configured via JCasC\"\n  numExecutors: 4\n  mode: NORMAL\n  scmCheckoutRetryCount: 3\n  securityRealm:\n    local:\n      allowsSignup: false\n      users:\n        - id: admin\n          password: ${JENKINS_ADMIN_PASSWORD}\n  authorizationStrategy:\n    roleBased:\n      roles:\n        global:\n          - name: admin\n            permissions:\n              - \"Overall/Administer\"\n            entries:\n              - user: admin\n          - name: readonly\n            permissions:\n              - \"Overall/Read\"\n              - \"Job/Read\"\n            entries:\n              - group: authenticated\n  clouds:\n    - kubernetes:\n        name: kubernetes\n        namespace: jenkins\n        jenkinsUrl: http://jenkins:8080\n        containerCapStr: '10'\n        templates:\n          - name: jnlp\n            label: kubernetes\n            containers:\n              - name: jnlp\n                image: jenkins/inbound-agent:latest\n                workingDir: /home/jenkins/agent\n\ncredentials:\n  system:\n    domainCredentials:\n      - credentials:\n          - usernamePassword:\n              scope: GLOBAL\n              id: github-credentials\n              username: ${GITHUB_USER}\n              password: ${GITHUB_TOKEN}\n              description: GitHub credentials\n\nunclassified:\n  location:\n    url: https://jenkins.example.com/\n    adminAddress: admin@example.com\n  gitHubConfiguration:\n    apiRateLimitChecker: ThrottleForNormalize\n\ntool:\n  jdk:\n    installations:\n      - name: jdk17\n        properties:\n          - installSource:\n              installers:\n                - adoptOpenJdkInstaller:\n                    id: jdk-17.0.9+9\n  nodejs:\n    installations:\n      - name: nodejs20\n        properties:\n          - installSource:\n              installers:\n                - nodeJSInstaller:\n                    id: '20.11.0'\n                    npmPackagesRefreshHours: 72"
+      }
+    }
+
+    === TYPE 2: JOB DSL SCRIPTS ===
+    Triggered by: "Job DSL", "seed job", "job definition", "groovy job"
+    JSON keys: "jobs/<name>.groovy"
+    Must use Job DSL API syntax (pipelineJob, multibranchPipelineJob, freeStyleJob, folder).
+
+    EXAMPLE — Job DSL seed script:
+    {
+      "files": {
+        "jobs/seed.groovy": "// Seed job — generates all other jobs\nfolder('applications') {\n  displayName('Applications')\n  description('Application build and deploy jobs')\n}\n\npipelineJob('applications/backend-api') {\n  displayName('Backend API')\n  description('Build and deploy the backend API service')\n  definition {\n    cpsScmFlowDefinition {\n      scm {\n        git {\n          remote {\n            url('https://github.com/org/backend-api.git')\n            credentials('github-credentials')\n          }\n          branches('*/main')\n        }\n      }\n      scriptPath('Jenkinsfile')\n      lightweight(true)\n    }\n  }\n  properties {\n    buildDiscarder {\n      strategy {\n        logRotator {\n          numToKeepStr('20')\n          daysToKeepStr('30')\n        }\n      }\n    }\n    pipelineTriggers {\n      triggers {\n        githubPush()\n      }\n    }\n  }\n}",
+        "jobs/multibranch.groovy": "multibranchPipelineJob('applications/frontend') {\n  displayName('Frontend App')\n  branchSources {\n    github {\n      id('frontend-repo')\n      repoOwner('org')\n      repository('frontend')\n      scanCredentialsId('github-credentials')\n      buildForkPRMerge(true)\n    }\n  }\n  orphanedItemStrategy {\n    discardOldItems {\n      numToKeep(20)\n    }\n  }\n}"
+      }
+    }
+
+    === TYPE 3: JCasC + JOB DSL COMBINED ===
+    Triggered by: "full Jenkins setup", "Jenkins config with jobs", "complete Jenkins configuration"
+    Generate both jenkins.yaml and jobs/*.groovy files.
+
+    === TYPE 4: UPDATING EXISTING CONFIGURATION ===
+    When existing content is provided via {existingContent}, modify the existing content.
+    Keep existing configuration blocks, add or change only what the user requests.
+    The JSON key MUST match the existing file path.
+
+    === RULES ===
+    - The JSON key is the EXACT file path where the file will be written
+    - Do NOT output raw YAML or Groovy — always use the JSON wrapper { "files": { ... } }
+    - Use ${VARIABLE} syntax in JCasC for secrets — never hardcode credentials
+    - JCasC YAML must be valid for the Jenkins Configuration as Code plugin
+    - Job DSL must use the Job DSL plugin API (pipelineJob, folder, multibranchPipelineJob)
+    - Include comments in Job DSL scripts for clarity
   bestPractices:
-    - Use declarative pipeline syntax with explicit agent specification
-    - Define stages with clear, descriptive names
-    - Use environment blocks for credentials and variables
-    - Implement post blocks for cleanup, notifications, and artifact archiving
-    - Use parallel stages for independent tasks to reduce build time
-    - Pin tool versions in the tools block (maven, jdk, nodejs)
-    - Use shared libraries for reusable pipeline logic
-    - Each stage must have descriptive names
-    - Credentials must use the credentials() helper, never hardcode secrets
-    - Include post blocks for error handling and cleanup
-    - Use when directives for conditional stage execution
+    - Use JCasC (jenkins.yaml) for all Jenkins system configuration — avoid manual UI changes
+    - Reference secrets via environment variables using ${VAR} syntax in JCasC — never hardcode credentials
+    - Define security realm and authorization strategy explicitly (LDAP, SAML, role-based)
+    - Configure Kubernetes or Docker cloud agents for dynamic, ephemeral build executors
+    - Use Job DSL seed jobs to generate all pipeline jobs from code — single source of truth
+    - Set buildDiscarder with logRotator on all jobs to prevent unbounded disk growth
+    - Use folder() to organize jobs by team, project, or environment
+    - Define global tool installations (JDK, Node.js, Maven) in the tool section for consistent builds
+    - Use multibranchPipelineJob for repositories that need per-branch pipeline execution
+    - Configure credentials at the system level with scoped access (GLOBAL, SYSTEM, folder-level)
+    - Set scmCheckoutRetryCount for resilience against transient SCM failures
+    - Use shared libraries defined in unclassified.globalLibraries for cross-pipeline code reuse
+    - Enable CSRF protection and agent-to-controller security in the security configuration
+    - Use orphanedItemStrategy to clean up stale branches and PRs in multibranch pipelines
   context7Libraries:
     - name: jenkins
-      query: "Jenkins declarative pipeline syntax, stages, steps, agent, post actions, shared libraries"
+      query: "Jenkins Configuration as Code JCasC plugin jenkins.yaml syntax, security realm authorization strategy role-based, credentials system domain, cloud kubernetes docker agents, tool installations JDK NodeJS Maven, Job DSL plugin API pipelineJob multibranchPipelineJob folder freeStyleJob, seed job pattern, unclassified global libraries location, buildDiscarder logRotator, scm git GitHub"
 
 files:
-  - path: "Jenkinsfile"
+  - path: "{outputPath}/jenkins.yaml"
     format: raw
+    conditional: true
+  - path: "{outputPath}/jobs/seed.groovy"
+    format: raw
+    conditional: true
+  - path: "{outputPath}/jobs/pipelines.groovy"
+    format: raw
+    conditional: true
+  - path: "{outputPath}/jobs/multibranch.groovy"
+    format: raw
+    conditional: true
+  - path: "{outputPath}/jobs/folders.groovy"
+    format: raw
+    conditional: true
 
 detection:
-  paths: ["Jenkinsfile"]
+  paths: ["jenkins.yaml", "jenkins.yml", "jenkins/*.yaml", "jobs/*.groovy", "casc/*.yaml", "casc/*.yml"]
   updateMode: true
 
 verification:
-  structural:
-    - path: "pipeline"
-      required: true
-      message: "Jenkinsfile must contain a pipeline block"
+  binary:
+    command: "yamllint -d relaxed {entryFile}"
+    parser: generic-stderr
+    timeout: 30000
+    cwd: output
 
 permissions:
   filesystem: write
-  child_process: none
+  child_process: required
   network: none
 
 scope:
-  write: ["Jenkinsfile"]
+  write: ["jenkins.yaml", "jenkins.yml", "jenkins/**/*.yaml", "jobs/**/*.groovy", "casc/**/*.yaml"]
 
 risk:
-  level: LOW
-  rationale: "CI/CD pipeline changes require PR review"
+  level: MEDIUM
+  rationale: "Jenkins configuration changes affect the CI/CD server setup, security, and all job definitions"
 
 execution:
   mode: generate
@@ -70,11 +131,11 @@ update:
   inputSource: file
   injectAs: existingContent
 ---
-# Jenkins
+# Jenkins Configuration as Code
 
 ## Prompt
 
-You are a Jenkins CI/CD expert specializing in declarative pipeline syntax.
+You are a Jenkins expert specializing in Configuration as Code (JCasC) and Job DSL for infrastructure-as-code management of Jenkins instances.
 
 {outputGuidance}
 
@@ -87,5 +148,6 @@ Project context: {projectContext}
 
 ## Keywords
 
-jenkins, jenkinsfile, pipeline, ci, cd, groovy, build, stages,
-declarative, scripted, shared-library, blue-ocean
+jenkins, jcasc, configuration-as-code, jenkins.yaml, job-dsl,
+seed-job, groovy, ci, cd, pipeline, multibranch, credentials,
+security, cloud-agents, kubernetes, tool-installation, folder

@@ -52,7 +52,7 @@ detection:
 
 verification:
   binary:
-    command: "make -n -f Makefile"
+    command: "make -n -f {entryFile}"
     parser: make-dryrun
     timeout: 30000
     cwd: output

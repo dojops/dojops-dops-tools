@@ -8,7 +8,7 @@ meta:
   description: "Generate Docker Swarm stack deployment files"
   author: dojops
   license: MIT
-  tags: [container, docker, swarm, orchestration, stack]
+  tags: [container, docker, swarm, orchestration, stack, cluster, deploy, overlay]
 
 context:
   technology: Docker Swarm
@@ -17,29 +17,81 @@ context:
     Generate a complete, valid Docker Swarm stack file in YAML format.
     Output raw YAML content directly — do NOT wrap in JSON or code fences.
     The output must be a valid docker-stack.yml compatible with `docker stack deploy`.
-    Use Compose file version 3.8+ with deploy configuration.
+    Use Compose file version 3.8+ with deploy configuration sections.
+
+    Detect the deployment scenario from context and generate appropriately:
+    - **Web application stack**: Application service + database + reverse proxy, with deploy replicas and health checks
+    - **Microservices**: Multiple services with overlay networks, service discovery via DNS, inter-service communication
+    - **Stateful services**: Volumes with driver_opts, placement constraints for data locality, global mode for agents
+    - **High availability**: Multiple replicas, update_config with parallelism and delay, rollback_config
+    - **Production stack**: Resource limits, secrets from external sources, configs for non-sensitive files
+
+    Stack file structure:
+    - version: "3.8" (required for Swarm deploy features)
+    - services: Each service MUST have a deploy section with replicas, resources, restart_policy, and update_config
+    - networks: Use overlay driver for multi-host communication, attachable for external access
+    - volumes: Named volumes for persistence, driver_opts for NFS or cloud storage
+    - secrets: External secrets managed by `docker secret create`, or file-based for development
+    - configs: External configs managed by `docker config create` for non-sensitive configuration
+
+    Example deploy section:
+      deploy:
+        replicas: 3
+        update_config:
+          parallelism: 1
+          delay: 10s
+          failure_action: rollback
+        rollback_config:
+          parallelism: 1
+        restart_policy:
+          condition: on-failure
+          delay: 5s
+          max_attempts: 3
+        resources:
+          limits:
+            cpus: '0.50'
+            memory: 512M
+          reservations:
+            cpus: '0.25'
+            memory: 256M
+        placement:
+          constraints:
+            - node.role == worker
   bestPractices:
-    - Use version 3.8 or later for full Swarm feature support
-    - Define deploy replicas, update_config, and restart_policy
-    - Use placement constraints to control node scheduling
-    - Configure health checks for service monitoring
-    - Use secrets and configs for sensitive and configuration data
-    - Define resource reservations and limits under deploy.resources
-    - Use overlay networks for multi-host service communication
-    - Use Compose file version 3.8 or later
-    - All services must have deploy configuration with restart_policy
-    - Secrets must use Docker secrets, never environment variables for passwords
-    - Define resource limits for all production services
+    - Use version 3.8 or later for full Swarm deploy feature support (deploy, secrets, configs)
+    - Define deploy.replicas, update_config, rollback_config, and restart_policy for every service
+    - Use placement constraints to control node scheduling (node.role, node.labels, node.hostname)
+    - Configure health checks with test, interval, timeout, retries, and start_period for all services
+    - Use Docker secrets (not environment variables) for passwords, API keys, and certificates
+    - Use Docker configs for non-sensitive configuration files that services consume at runtime
+    - Define resource reservations AND limits under deploy.resources for capacity planning
+    - Use overlay networks with encryption enabled for secure multi-host service communication
+    - Set update_config.failure_action to rollback for automatic rollback on failed updates
+    - Pin image versions with SHA256 digests or specific tags for production reproducibility
+    - Use deploy.mode global for daemon-like services (logging agents, monitoring exporters)
+    - Configure endpoint_mode (vip or dnsrr) based on load balancing requirements
+    - Use deploy.labels for service metadata and integration with reverse proxies (Traefik labels)
+    - Set stop_grace_period for services that need time for graceful shutdown
   context7Libraries:
     - name: docker-swarm
-      query: "Docker Swarm stack file, deploy configuration, services, networks, secrets, health checks"
+      query: "Docker Swarm stack file compose version 3.8, deploy replicas update_config rollback_config restart_policy, resources limits reservations, placement constraints, overlay networks encryption, secrets configs external, health checks, endpoint_mode, global mode"
 
 files:
-  - path: "docker-stack.yml"
+  - path: "{outputPath}/docker-stack.yml"
     format: raw
+    conditional: true
+  - path: "{outputPath}/docker-stack.prod.yml"
+    format: raw
+    conditional: true
+  - path: "{outputPath}/docker-stack.dev.yml"
+    format: raw
+    conditional: true
+  - path: "{outputPath}/docker-stack.override.yml"
+    format: raw
+    conditional: true
 
 detection:
-  paths: ["docker-stack.yml"]
+  paths: ["docker-stack.yml", "docker-stack.yaml", "docker-stack.*.yml", "docker-stack.*.yaml"]
   updateMode: true
 
 verification:
@@ -47,18 +99,23 @@ verification:
     - path: "services"
       required: true
       message: "Stack file must have a 'services' section"
+  binary:
+    command: "docker compose -f {entryFile} config --quiet"
+    parser: generic-stderr
+    timeout: 30000
+    cwd: output
 
 permissions:
   filesystem: write
-  child_process: none
+  child_process: required
   network: none
 
 scope:
-  write: ["docker-stack.yml"]
+  write: ["docker-stack.yml", "docker-stack.yaml", "docker-stack.*.yml", "docker-stack.*.yaml"]
 
 risk:
   level: MEDIUM
-  rationale: "Swarm stack changes affect running services across nodes"
+  rationale: "Swarm stack changes affect running services across cluster nodes"
 
 execution:
   mode: generate
@@ -74,7 +131,7 @@ update:
 
 ## Prompt
 
-You are a Docker Swarm expert specializing in stack deployment configurations.
+You are a Docker Swarm expert specializing in stack deployment configurations, service orchestration, and production cluster management.
 
 {outputGuidance}
 
@@ -88,4 +145,5 @@ Project context: {projectContext}
 ## Keywords
 
 docker, swarm, stack, compose, deploy, service, overlay,
-orchestration, cluster, node, manager, worker
+orchestration, cluster, node, manager, worker, replicas,
+secrets, configs, placement, rolling-update, health-check

@@ -69,7 +69,7 @@ detection:
 
 verification:
   binary:
-    command: "hadolint --format json Dockerfile"
+    command: "hadolint --format json {entryFile}"
     parser: hadolint-json
     timeout: 30000
     cwd: output

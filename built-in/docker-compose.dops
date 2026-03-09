@@ -55,7 +55,7 @@ verification:
       required: true
       message: "Docker Compose must define at least one service"
   binary:
-    command: "docker compose -f docker-compose.yml config"
+    command: "docker compose -f {entryFile} config"
     parser: docker-compose-config
     timeout: 30000
     cwd: output

@@ -5,40 +5,116 @@ kind: tool
 meta:
   name: azure-pipelines
   version: 2.1.0
-  description: "Generate Azure DevOps pipeline definitions"
+  description: "Generate Azure DevOps pipeline definitions with multi-stage deployments and template references"
   author: dojops
   license: MIT
-  tags: [ci, cd, azure, devops, pipeline]
+  tags: [ci, cd, azure, devops, pipeline, yaml, deployment]
 
 context:
   technology: Azure Pipelines
-  fileFormat: yaml
+  fileFormat: json
   outputGuidance: |
-    Generate a complete, valid Azure Pipelines YAML file.
-    Output raw YAML content directly — do NOT wrap in JSON or code fences.
-    The output must be a valid azure-pipelines.yml that Azure DevOps can parse.
+    CRITICAL: You MUST output a JSON object with a "files" key. Each key in "files" is the exact file path, each value is the YAML content as a string.
+
+    Determine the pipeline complexity from the user's request:
+
+    === TYPE 1: SIMPLE PIPELINE ===
+    Triggered by: basic CI, single-stage build, simple test/build
+    JSON key: "azure-pipelines.yml"
+    The YAML must have: trigger, pool, steps (or stages with jobs and steps).
+
+    EXAMPLE — simple CI pipeline:
+    {
+      "files": {
+        "azure-pipelines.yml": "trigger:\n  branches:\n    include:\n      - main\n  paths:\n    exclude:\n      - '*.md'\n\npool:\n  vmImage: ubuntu-latest\n\nsteps:\n  - task: NodeTool@0\n    displayName: Use Node.js 20\n    inputs:\n      versionSpec: '20.x'\n  - script: npm ci\n    displayName: Install dependencies\n  - script: npm test\n    displayName: Run tests\n  - script: npm run build\n    displayName: Build application"
+      }
+    }
+
+    === TYPE 2: MULTI-STAGE PIPELINE ===
+    Triggered by: "multi-stage", "deploy", "environments", "staging and production"
+    JSON key: "azure-pipelines.yml"
+    The YAML must have: trigger, stages (each with displayName, jobs, and steps), deployment jobs with environment.
+
+    EXAMPLE — multi-stage with deployment:
+    {
+      "files": {
+        "azure-pipelines.yml": "trigger:\n  branches:\n    include:\n      - main\n\nvariables:\n  - group: app-settings\n\nstages:\n  - stage: Build\n    displayName: Build and Test\n    pool:\n      vmImage: ubuntu-latest\n    jobs:\n      - job: BuildJob\n        displayName: Build\n        steps:\n          - script: npm ci\n            displayName: Install\n          - script: npm test\n            displayName: Test\n          - script: npm run build\n            displayName: Build\n          - publish: $(System.DefaultWorkingDirectory)/dist\n            artifact: drop\n  - stage: DeployStaging\n    displayName: Deploy to Staging\n    dependsOn: Build\n    jobs:\n      - deployment: DeployWeb\n        displayName: Deploy to Staging\n        environment: staging\n        strategy:\n          runOnce:\n            deploy:\n              steps:\n                - download: current\n                  artifact: drop\n                - script: echo Deploying to staging\n                  displayName: Deploy"
+      }
+    }
+
+    === TYPE 3: PIPELINE WITH TEMPLATES ===
+    Triggered by: "template", "reusable", "shared pipeline", "template reference"
+    Generate both the main pipeline and template files.
+
+    EXAMPLE — pipeline + job template:
+    {
+      "files": {
+        "azure-pipelines.yml": "trigger:\n  branches:\n    include:\n      - main\n\nstages:\n  - stage: Build\n    displayName: Build\n    jobs:\n      - template: templates/build-job.yml\n        parameters:\n          nodeVersion: '20.x'",
+        "templates/build-job.yml": "parameters:\n  - name: nodeVersion\n    type: string\n    default: '20.x'\n\njobs:\n  - job: Build\n    displayName: Build with Node ${{ parameters.nodeVersion }}\n    pool:\n      vmImage: ubuntu-latest\n    steps:\n      - task: NodeTool@0\n        displayName: Use Node.js ${{ parameters.nodeVersion }}\n        inputs:\n          versionSpec: ${{ parameters.nodeVersion }}\n      - script: npm ci\n        displayName: Install dependencies\n      - script: npm run build\n        displayName: Build"
+      }
+    }
+
+    === TYPE 4: UPDATING EXISTING PIPELINE ===
+    When existing content is provided via {existingContent}, modify the existing YAML.
+    Keep existing stages/jobs/steps, add or change only what the user requests.
+    The JSON key MUST match the existing file path.
+
+    === RULES ===
+    - The JSON key is the EXACT file path where the file will be written
+    - Do NOT output raw YAML — always use the JSON wrapper { "files": { ... } }
+    - Always include displayName for all stages, jobs, and steps
+    - Use variable groups or Azure Key Vault for secrets — never inline sensitive values
+    - Use task versioning (e.g., NodeTool@0, DotNetCoreCLI@2) for reproducibility
+    - For deployment jobs, always specify environment and strategy
+
+    Detect project type from context:
+    - Node.js: NodeTool@0, npm ci/test/build, cache node_modules
+    - .NET: DotNetCoreCLI@2, dotnet build/test/publish
+    - Java: Maven@4 or Gradle@3, JDK tool
+    - Python: UsePythonVersion@0, pip install, pytest
+    - Docker: Docker@2 task, container registry service connections
+    - Terraform: TerraformInstaller@1, TerraformTaskV4
   bestPractices:
-    - Use YAML pipelines over classic UI pipelines for version control
-    - Define trigger and pr sections for branch-based execution
-    - Use template references for reusable pipeline components
-    - Leverage Azure-hosted agents with vmImage specification
-    - Use variable groups and key vault integration for secrets
-    - Define stages for multi-environment deployments
-    - Use condition expressions for conditional step execution
-    - Use stages for multi-environment pipelines
-    - Secrets must use variable groups or Azure Key Vault, never inline
-    - Use task versioning (e.g., UseDotNet@2) for reproducibility
-    - Include displayName for all steps and stages
+    - Use YAML pipelines over classic UI pipelines for version-controlled, reviewable CI/CD
+    - Define trigger and pr sections with branch filters and path exclusions for targeted execution
+    - Use template references (extends, template) for reusable pipeline components across repos
+    - Leverage Azure-hosted agents with vmImage (ubuntu-latest, windows-latest, macos-latest)
+    - Use variable groups linked to Azure Key Vault for centralized secret management
+    - Define stages for multi-environment deployments with dependsOn for ordering
+    - Use deployment jobs with environment keyword for approval gates and deployment history
+    - Add condition expressions for conditional stage/job/step execution (succeeded(), failed(), eq())
+    - Use task versioning (e.g., NodeTool@0, Docker@2) to ensure reproducible builds
+    - Include displayName for all stages, jobs, and steps for readable pipeline runs
+    - Use caching with Cache@2 task for dependency directories (node_modules, .pip, .m2)
+    - Define parameters for configurable template inputs with type, default, and values
+    - Use strategy.matrix for multi-configuration testing (OS, language version combinations)
+    - Publish and download artifacts between stages using publish/download steps
   context7Libraries:
     - name: azure-pipelines
-      query: "Azure Pipelines YAML syntax, stages, jobs, steps, templates, variables, triggers"
+      query: "Azure Pipelines YAML syntax trigger pr branches paths, stages jobs steps displayName, deployment jobs environment strategy runOnce rolling canary, template references parameters extends, variable groups Key Vault secrets, task versioning NodeTool DotNetCoreCLI Docker, caching Cache@2, conditions expressions, artifacts publish download, matrix strategy"
 
 files:
-  - path: "azure-pipelines.yml"
+  - path: "{outputPath}/azure-pipelines.yml"
     format: raw
+    conditional: true
+  - path: "{outputPath}/templates/build-job.yml"
+    format: raw
+    conditional: true
+  - path: "{outputPath}/templates/deploy-job.yml"
+    format: raw
+    conditional: true
+  - path: "{outputPath}/templates/test-job.yml"
+    format: raw
+    conditional: true
+  - path: "{outputPath}/templates/steps/build-steps.yml"
+    format: raw
+    conditional: true
+  - path: "{outputPath}/templates/variables/common.yml"
+    format: raw
+    conditional: true
 
 detection:
-  paths: ["azure-pipelines.yml"]
+  paths: ["azure-pipelines.yml", "azure-pipelines.yaml", ".azure-pipelines/*.yml", "templates/*.yml", "pipelines/*.yml"]
   updateMode: true
 
 verification:
@@ -46,18 +122,23 @@ verification:
     - path: "trigger"
       required: true
       message: "Missing required 'trigger' section"
+  binary:
+    command: "yamllint -d relaxed {entryFile}"
+    parser: generic-stderr
+    timeout: 30000
+    cwd: output
 
 permissions:
   filesystem: write
-  child_process: none
+  child_process: required
   network: none
 
 scope:
-  write: ["azure-pipelines.yml"]
+  write: ["azure-pipelines.yml", "azure-pipelines.yaml", "templates/**/*.yml", "templates/**/*.yaml", "pipelines/**/*.yml"]
 
 risk:
   level: LOW
-  rationale: "CI/CD pipeline changes require PR review"
+  rationale: "CI/CD pipeline changes require PR review before taking effect"
 
 execution:
   mode: generate
@@ -73,7 +154,7 @@ update:
 
 ## Prompt
 
-You are a CI/CD expert specializing in Azure DevOps Pipelines.
+You are a CI/CD expert specializing in Azure DevOps Pipelines with deep knowledge of multi-stage deployments, template references, and deployment strategies.
 
 {outputGuidance}
 
@@ -87,4 +168,5 @@ Project context: {projectContext}
 ## Keywords
 
 azure, pipelines, devops, ado, ci, cd, yaml, pipeline, build,
-release, azure-devops, azure-pipelines, vsts
+release, azure-devops, azure-pipelines, stages, deployment,
+template, variable-group, environment, multi-stage, strategy

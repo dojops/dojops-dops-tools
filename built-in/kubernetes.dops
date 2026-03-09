@@ -69,7 +69,7 @@ verification:
       required: true
       message: "Kubernetes resource must have an apiVersion"
   binary:
-    command: "kubectl apply --dry-run=client -f manifest.yaml"
+    command: "kubectl apply --dry-run=client -f {entryFile}"
     parser: kubectl-stderr
     timeout: 30000
     cwd: output

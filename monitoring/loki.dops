@@ -5,47 +5,226 @@ kind: tool
 meta:
   name: loki
   version: 2.1.0
-  description: "Generate Grafana Loki log pipeline configurations"
+  description: "Generate Grafana Loki log aggregation configurations, Promtail agents, and recording rules"
   author: dojops
   license: MIT
-  tags: [logging, loki, grafana, logs, pipeline]
+  tags: [logging, loki, grafana, logs, pipeline, promtail, log-aggregation, logql, observability]
 
 context:
   technology: Grafana Loki
-  fileFormat: yaml
+  fileFormat: json
   outputGuidance: |
-    Generate a complete, valid Grafana Loki configuration in YAML format.
-    Output raw YAML content directly — do NOT wrap in JSON or code fences.
-    The output must be a valid loki-config.yaml for Loki server configuration.
+    Generate Grafana Loki configuration files as a JSON object with file paths as keys and file contents as string values.
+    Format: { "files": { "loki-config.yaml": "content...", "promtail-config.yaml": "content...", "loki-rules.yaml": "content..." } }
+    At least one file key is required. Files are optional based on the request:
+      - loki-config.yaml — Loki server configuration (all deployment modes)
+      - promtail-config.yaml — Promtail agent configuration for log collection
+      - loki-rules.yaml — Recording and alerting rules in LogQL
+      - loki-alerts.yaml — Alert rule groups for Loki Ruler component
+    Each file must be valid YAML for its respective component.
+    Do NOT output raw YAML — use the JSON wrapper to enable multi-file output.
+
+    === LOKI SERVER CONFIG (loki-config.yaml) ===
+    Key sections and their purpose:
+      auth_enabled: false  # Multi-tenancy (set true for shared clusters)
+
+      server:
+        http_listen_port: 3100
+        grpc_listen_port: 9096
+        log_level: info
+
+      common:
+        path_prefix: /loki
+        storage:
+          filesystem:
+            chunks_directory: /loki/chunks
+            rules_directory: /loki/rules
+        replication_factor: 1
+        ring:
+          kvstore:
+            store: inmemory
+
+      schema_config:
+        configs:
+          - from: "2024-01-01"
+            store: tsdb
+            object_store: filesystem
+            schema: v13
+            index:
+              prefix: index_
+              period: 24h
+
+      storage_config:
+        tsdb_shipper:
+          active_index_directory: /loki/tsdb-index
+          cache_location: /loki/tsdb-cache
+        filesystem:
+          directory: /loki/chunks
+        # For S3:
+        # aws:
+        #   s3: s3://region/bucket-name
+        #   s3forcepathstyle: true
+
+      limits_config:
+        retention_period: 744h  # 31 days
+        ingestion_rate_mb: 10
+        ingestion_burst_size_mb: 20
+        per_stream_rate_limit: 3MB
+        max_query_series: 500
+        max_query_parallelism: 32
+        max_entries_limit_per_query: 5000
+
+      compactor:
+        working_directory: /loki/compactor
+        compaction_interval: 10m
+        retention_enabled: true
+        retention_delete_delay: 2h
+        retention_delete_worker_count: 150
+
+      ingester:
+        lifecycler:
+          ring:
+            replication_factor: 1
+        chunk_idle_period: 30m
+        chunk_retain_period: 1m
+        max_transfer_retries: 0
+
+      querier:
+        max_concurrent: 20
+        query_ingesters_within: 3h
+
+      ruler:
+        storage:
+          type: local
+          local:
+            directory: /loki/rules
+        rule_path: /loki/rules-temp
+        alertmanager_url: http://alertmanager:9093
+        ring:
+          kvstore:
+            store: inmemory
+        enable_api: true
+
+    === DEPLOYMENT MODES ===
+    - **Simple (monolithic)**: Single binary, all components in one process — suitable for dev/small workloads
+    - **Simple Scalable**: Read path + write path + backend — recommended for medium workloads (target: "scalable")
+    - **Microservices**: Each component separate (distributor, ingester, querier, compactor, ruler) — large scale
+
+    === PROMTAIL CONFIG (promtail-config.yaml) ===
+    Structure:
+      server:
+        http_listen_port: 9080
+        grpc_listen_port: 0
+
+      positions:
+        filename: /tmp/positions.yaml
+
+      clients:
+        - url: http://loki:3100/loki/api/v1/push
+          tenant_id: default  # when auth_enabled: true
+
+      scrape_configs:
+        - job_name: system
+          static_configs:
+            - targets: [localhost]
+              labels:
+                job: varlogs
+                __path__: /var/log/*.log
+        - job_name: containers
+          docker_sd_configs:
+            - host: unix:///var/run/docker.sock
+              refresh_interval: 5s
+          relabel_configs:
+            - source_labels: [__meta_docker_container_name]
+              target_label: container
+          pipeline_stages:
+            - docker: {}
+            - json:
+                expressions:
+                  level: level
+            - labels:
+                level:
+
+    Promtail pipeline stages for log processing:
+      - docker — Parse Docker JSON log format
+      - json — Extract fields from JSON logs
+      - regex — Extract fields with regex patterns
+      - labels — Promote extracted fields to Loki labels
+      - timestamp — Parse and set timestamp from log content
+      - multiline — Combine multi-line logs (stack traces)
+      - output — Set the log line content
+      - drop — Drop log entries matching conditions
+      - tenant — Set tenant ID dynamically
+
+    === LOKI RULES (loki-rules.yaml / loki-alerts.yaml) ===
+    Structure:
+      groups:
+        - name: high-error-rate
+          rules:
+            - alert: HighErrorRate
+              expr: |
+                sum(rate({job="app"} |= "error" [5m])) by (service)
+                / sum(rate({job="app"} [5m])) by (service)
+                > 0.05
+              for: 10m
+              labels:
+                severity: critical
+              annotations:
+                summary: "High error rate detected for {{ $labels.service }}"
+            - record: job:loki_request_duration_seconds:99quantile
+              expr: histogram_quantile(0.99, sum(rate({job="loki"} | logfmt | unwrap duration [5m])) by (le))
+
+    Detect deployment scenario from context:
+    - **Single-node**: Monolithic Loki + Promtail, filesystem storage, simple retention
+    - **Cloud storage**: S3/GCS/Azure Blob for chunks, DynamoDB/BigTable for index
+    - **Kubernetes**: Helm chart values, ServiceMonitor, Promtail DaemonSet, namespace-based tenancy
+    - **High availability**: Simple Scalable or Microservices mode, replication_factor > 1
+    - **Multi-tenant**: auth_enabled: true, per-tenant limits, tenant_id in Promtail clients
   bestPractices:
-    - Configure appropriate retention periods based on compliance requirements
-    - Use chunk_target_size for optimal storage efficiency
-    - Set ingestion rate limits to prevent resource exhaustion
-    - Configure schema_config with appropriate period_config entries
-    - Use compactor for automatic log compaction and retention
-    - Enable multi-tenancy with auth_enabled when sharing clusters
-    - Set query limits to prevent expensive queries
-    - Set retention_period in limits_config for log lifecycle management
-    - Define ingestion rate limits to prevent overload
-    - Use TSDB store for new deployments (not BoltDB)
-    - Configure compactor when retention is enabled
+    - Use TSDB store type (not BoltDB) for new deployments — it is the current recommended index store
+    - Configure schema_config with appropriate period_config entries and schema version (v13 current)
+    - Set retention_period in limits_config and enable retention in compactor for log lifecycle management
+    - Define ingestion rate limits (ingestion_rate_mb, ingestion_burst_size_mb, per_stream_rate_limit) to prevent overload
+    - Use chunk_target_size (1.5MB recommended) for optimal storage efficiency and query performance
+    - Enable compactor with retention_enabled for automatic log compaction and deletion
+    - Set auth_enabled to true for multi-tenant clusters and configure tenant_id in Promtail clients
+    - Configure query limits (max_query_series, max_entries_limit_per_query) to prevent expensive queries
+    - Use Promtail pipeline stages (json, regex, labels, timestamp) for structured log extraction
+    - Set positions file in Promtail to track read positions across restarts
+    - Use S3 or GCS object storage for chunks in production — filesystem only for development
+    - Configure replication_factor > 1 in production for ingester high availability
+    - Use relabel_configs in Promtail to derive meaningful labels from discovery metadata
+    - Keep label cardinality low — high-cardinality labels (user_id, request_id) degrade performance significantly
   context7Libraries:
     - name: grafana-loki
-      query: "Loki configuration YAML, schema_config, storage_config, ingester, compactor, limits"
+      query: "Loki configuration YAML schema_config storage_config TSDB filesystem S3 GCS, limits_config ingestion rate retention period, compactor retention enabled working directory, ingester chunk settings lifecycler ring, Promtail configuration scrape_configs pipeline_stages docker_sd_configs static_configs relabel_configs, LogQL alerting recording rules ruler configuration, deployment modes monolithic simple-scalable microservices, querier query_ingesters_within max_concurrent"
 
 files:
-  - path: "loki-config.yaml"
+  - path: "{outputPath}/loki-config.yaml"
     format: raw
+    conditional: true
+  - path: "{outputPath}/promtail-config.yaml"
+    format: raw
+    conditional: true
+  - path: "{outputPath}/loki-rules.yaml"
+    format: raw
+    conditional: true
+  - path: "{outputPath}/loki-alerts.yaml"
+    format: raw
+    conditional: true
 
 detection:
-  paths: ["loki-config.yaml", "loki.yaml"]
+  paths: ["loki-config.yaml", "loki.yaml", "loki.yml", "promtail-config.yaml", "promtail.yaml", "promtail.yml", "*/loki*.yaml", "*/promtail*.yaml"]
   updateMode: true
 
 verification:
   structural:
     - path: "schema_config"
-      required: true
-      message: "Missing required 'schema_config' section"
+      required: false
+      message: "Loki config should have a 'schema_config' section"
+    - path: "server"
+      required: false
+      message: "Loki/Promtail config should have a 'server' section"
 
 permissions:
   filesystem: write
@@ -53,11 +232,11 @@ permissions:
   network: none
 
 scope:
-  write: ["loki-config.yaml", "loki.yaml"]
+  write: ["loki-config.yaml", "loki.yaml", "loki.yml", "promtail-config.yaml", "promtail.yaml", "promtail.yml", "loki-rules.yaml", "loki-alerts.yaml", "**/*.yaml"]
 
 risk:
   level: LOW
-  rationale: "Loki config changes require a service restart to take effect"
+  rationale: "Loki and Promtail config changes require service restart to take effect"
 
 execution:
   mode: generate
@@ -73,7 +252,7 @@ update:
 
 ## Prompt
 
-You are a Grafana Loki expert specializing in log aggregation pipeline configuration.
+You are a Grafana Loki expert specializing in log aggregation pipeline configuration, Promtail agent setup, storage backends, and LogQL rules.
 
 {outputGuidance}
 
@@ -87,4 +266,6 @@ Project context: {projectContext}
 ## Keywords
 
 loki, grafana-loki, logging, logs, log-aggregation, promtail,
-logql, pipeline, retention, grafana, observability
+logql, pipeline, retention, grafana, observability, tsdb,
+schema-config, storage-config, compactor, ingester, querier,
+multi-tenant, pipeline-stages, scrape-config, ruler

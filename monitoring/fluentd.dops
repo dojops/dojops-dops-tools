@@ -5,46 +5,141 @@ kind: tool
 meta:
   name: fluentd
   version: 2.1.0
-  description: "Generate Fluentd log collector configurations"
+  description: "Generate Fluentd log collection and processing pipeline configurations"
   author: dojops
   license: MIT
-  tags: [logging, fluentd, logs, pipeline, collector]
+  tags: [logging, fluentd, logs, pipeline, collector, log-routing, td-agent, observability]
 
 context:
   technology: Fluentd
-  fileFormat: raw
+  fileFormat: json
   outputGuidance: |
-    Generate a complete, valid Fluentd configuration file.
-    Output raw Fluentd config content directly — do NOT wrap in JSON or code fences.
-    The output must be a valid fluent.conf with source, filter, and match directives.
-    Use the Fluentd v1 configuration syntax.
+    Generate Fluentd configuration files as a JSON object with file paths as keys and file contents as string values.
+    Format: { "files": { "fluent.conf": "content...", "conf.d/inputs.conf": "content...", "conf.d/outputs.conf": "content..." } }
+    The "fluent.conf" key is always required. Other files are optional based on the request:
+      - fluent.conf — Main configuration with <system>, global includes, and core pipeline directives
+      - conf.d/inputs.conf — Input source definitions (<source> directives)
+      - conf.d/filters.conf — Filter and parsing rules (<filter> directives)
+      - conf.d/outputs.conf — Output destinations and buffering (<match> directives)
+    Each file content must be valid Fluentd v1 configuration syntax.
+    Do NOT output raw Fluentd config — use the JSON wrapper to enable multi-file output.
+
+    === MAIN CONFIG (fluent.conf) ===
+    Structure:
+      <system>
+        log_level info
+        workers 4
+      </system>
+
+      @include conf.d/*.conf
+
+      <source>
+        @type forward
+        port 24224
+        bind 0.0.0.0
+      </source>
+
+    === SOURCE DIRECTIVES (<source>) ===
+    Input plugin types:
+      - tail — File tailing with pos_file tracking, parse section, path patterns
+      - forward — Fluentd-to-Fluentd forwarding (port 24224), heartbeat, shared_key auth
+      - http — HTTP endpoint for log ingestion, JSON/msgpack body
+      - syslog — Syslog receiver (UDP/TCP), facility and severity parsing
+      - monitor_agent — Health check endpoint for Fluentd metrics
+
+    === FILTER DIRECTIVES (<filter>) ===
+    Processing plugins:
+      - record_transformer — Add/modify/delete fields, use Ruby expressions with ${record["field"]}
+      - parser — Re-parse log content (regexp, json, apache2, nginx, multiline)
+      - grep — Include/exclude events by regex on fields
+      - concat — Multi-line log concatenation with pattern matching
+
+    === MATCH DIRECTIVES (<match>) ===
+    Output plugin types with buffer configuration:
+      - elasticsearch — Bulk indexing (host, port, index_name, type_name)
+      - s3 — S3 object storage (bucket, region, path pattern, time_slice_format)
+      - kafka/kafka2 — Kafka producer (brokers, topic_key, default_topic)
+      - forward — Forward to downstream Fluentd (standby, weight-based load balancing)
+      - stdout — Debug output (development only)
+
+    === BUFFER CONFIGURATION ===
+    Every production <match> should include a <buffer> section:
+      <buffer tag,time>
+        @type file
+        path /var/log/fluentd/buffer/
+        flush_interval 30s
+        flush_thread_count 2
+        retry_max_interval 30
+        retry_forever true
+        chunk_limit_size 8MB
+        total_limit_size 2GB
+      </buffer>
+
+    === LABEL ROUTING ===
+    Use @label for complex routing:
+      <source>
+        @type tail
+        tag app.*
+        @label @APP_PIPELINE
+      </source>
+
+      <label @APP_PIPELINE>
+        <filter app.**>
+          @type parser
+          ...
+        </filter>
+        <match app.**>
+          @type elasticsearch
+          ...
+        </match>
+      </label>
+
+    Detect log source from context:
+    - **Application logs**: Tail plugin with JSON/regex parsers, record enrichment
+    - **Container logs**: Docker/Kubernetes log drivers, metadata enrichment, multiline parsing
+    - **Syslog**: Syslog input plugin, facility/severity routing
+    - **Aggregation**: Forward input, multi-worker, load balancing, high availability
+    - **Cloud integration**: S3, CloudWatch, GCS output plugins
   bestPractices:
-    - Use source directives for each log input (tail, forward, http)
-    - Apply filter directives for parsing, enrichment, and transformation
-    - Configure buffer settings for reliable delivery (file buffer, flush intervals)
-    - Use tag-based routing with match directives and wildcards
-    - Set pos_file for tail inputs to track read positions
-    - Enable retry with exponential backoff for output plugins
-    - Use record_transformer filter for adding metadata fields
-    - Every tail source must define a pos_file for position tracking
-    - Use file-based buffers for reliable delivery in production
-    - Apply filters before match directives in the pipeline
-    - Set retry configuration for all output plugins
+    - Use <source> directives for each log input with appropriate plugin (tail, forward, http, syslog)
+    - Apply <filter> directives for parsing, enrichment, and transformation before output
+    - Configure <buffer> with file type for reliable delivery in production (never use memory buffer for critical logs)
+    - Use tag-based routing with <match> directives and wildcard patterns (**, app.*, etc.)
+    - Set pos_file for every tail input to track read positions across restarts
+    - Enable retry with exponential backoff for all output plugins (retry_max_interval, retry_forever)
+    - Use record_transformer filter for adding metadata fields (hostname, environment, service)
+    - Use @label routing for complex pipelines to avoid tag collision and improve readability
+    - Set flush_interval and chunk_limit_size based on throughput requirements and destination capacity
+    - Configure <system> with appropriate log_level and workers count for production workloads
+    - Use @include to split configuration into modular files (conf.d/inputs.conf, conf.d/outputs.conf)
+    - Configure secondary output for failed events to prevent data loss (<secondary> in match blocks)
+    - Set total_limit_size on buffers to prevent disk exhaustion
+    - Use multiline parsing (concat filter or multiline parser) for stack traces and multi-line log entries
   context7Libraries:
     - name: fluentd
-      query: "Fluentd configuration syntax, source, filter, match, buffer, plugins, routing"
+      query: "Fluentd configuration syntax source filter match directives, buffer configuration file memory flush retry, plugin types tail forward elasticsearch s3 kafka, label routing complex pipelines, record_transformer parser grep concat filters, Kubernetes Docker container log collection metadata enrichment, multiline parsing, high availability forwarding"
 
 files:
-  - path: "fluent.conf"
+  - path: "{outputPath}/fluent.conf"
     format: raw
+    conditional: true
+  - path: "{outputPath}/conf.d/inputs.conf"
+    format: raw
+    conditional: true
+  - path: "{outputPath}/conf.d/filters.conf"
+    format: raw
+    conditional: true
+  - path: "{outputPath}/conf.d/outputs.conf"
+    format: raw
+    conditional: true
 
 detection:
-  paths: ["fluent.conf", "fluentd.conf"]
+  paths: ["fluent.conf", "fluentd.conf", "fluentd/*.conf", "td-agent.conf", "conf.d/*.conf", "*/fluent.conf"]
   updateMode: true
 
 verification:
   binary:
-    command: "fluentd --dry-run -c fluent.conf"
+    command: "fluentd --dry-run -c {entryFile}"
     parser: generic-stderr
     timeout: 30000
     cwd: output
@@ -55,7 +150,7 @@ permissions:
   network: none
 
 scope:
-  write: ["fluent.conf"]
+  write: ["fluent.conf", "fluentd.conf", "td-agent.conf", "conf.d/*.conf", "fluentd/*.conf", "**/*.conf"]
 
 risk:
   level: LOW
@@ -75,7 +170,7 @@ update:
 
 ## Prompt
 
-You are a Fluentd expert specializing in log collection and pipeline configuration.
+You are a Fluentd expert specializing in log collection pipelines, plugin configuration, buffer management, and high-availability log routing.
 
 {outputGuidance}
 
@@ -89,4 +184,6 @@ Project context: {projectContext}
 ## Keywords
 
 fluentd, fluent, logging, log-collector, pipeline, td-agent,
-elasticsearch, kafka, s3, buffer, plugin, filter, match
+elasticsearch, kafka, s3, buffer, plugin, filter, match, source,
+tag-routing, label, record-transformer, multiline, forward,
+aggregation, parsing

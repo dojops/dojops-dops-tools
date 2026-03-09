@@ -87,7 +87,7 @@ detection:
 
 verification:
   binary:
-    command: "npx @jenkins-cd/js-builder lint Jenkinsfile || true"
+    command: "npx @jenkins-cd/js-builder lint {entryFile} || true"
     parser: generic-stderr
     timeout: 30000
     cwd: output

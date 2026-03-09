@@ -5,60 +5,166 @@ kind: tool
 meta:
   name: traefik
   version: 2.1.0
-  description: "Generate Traefik reverse proxy and load balancer configurations"
+  description: "Generate Traefik reverse proxy, load balancer, and ingress configurations"
   author: dojops
   license: MIT
-  tags: [proxy, traefik, loadbalancer, ingress, tls]
+  tags: [proxy, traefik, loadbalancer, ingress, tls, reverse-proxy, middleware, letsencrypt]
 
 context:
   technology: Traefik
   fileFormat: yaml
   outputGuidance: |
-    Generate a complete, valid Traefik static configuration in YAML format.
+    Generate complete, valid Traefik configuration in YAML format.
     Output raw YAML content directly — do NOT wrap in JSON or code fences.
-    The output must be a valid traefik.yml that Traefik v3 can parse.
+    The output must be valid YAML that Traefik v3 can parse.
+
+    Traefik uses TWO configuration layers — detect what to generate from context:
+
+    1. **Static configuration** (traefik.yml): Loaded at startup, defines infrastructure-level settings.
+       - entryPoints: Named listeners with address, HTTP redirections, proxy protocol
+       - providers: Where Traefik discovers routes (docker, kubernetes, file, consul, etc.)
+       - certificatesResolvers: ACME/Let's Encrypt configuration (httpChallenge, tlsChallenge, dnsChallenge)
+       - api: Dashboard and API endpoint configuration (insecure, dashboard)
+       - log/accessLog: Logging configuration (level, format, filePath, filters)
+       - metrics: Prometheus, Datadog, StatsD, InfluxDB exporters
+       - serversTransport: Global backend connection settings (insecureSkipVerify, rootCAs)
+
+    2. **Dynamic configuration** (dynamic/*.yml): Hot-reloaded, defines routing rules.
+       - http.routers: Match rules (Host, Path, Headers), entryPoints, TLS options, middleware chains
+       - http.services: Backend service definitions (url, weight, health checks, sticky sessions)
+       - http.middlewares: Request/response transformations (headers, rateLimit, basicAuth, stripPrefix, compress, retry)
+       - tcp.routers/services: TCP-level routing (SNI matching, passthrough TLS)
+       - tls.certificates: Manual certificate files (certFile, keyFile)
+       - tls.options: TLS version and cipher suite configurations
+
+    Detect the deployment scenario from context:
+    - **Docker provider**: Labels-based routing with docker provider, exposedByDefault: false
+    - **Kubernetes Ingress**: Kubernetes provider with IngressRoute CRDs or standard Ingress
+    - **File provider**: File-based dynamic config with directory watching
+    - **Simple reverse proxy**: Static + dynamic config for routing to backend services
+    - **Multi-domain**: Multiple routers with different Host rules, per-domain TLS certificates
+    - **API gateway**: Middleware chains (rateLimit, basicAuth, headers, circuitBreaker), path-based routing
+
+    Example static config (traefik.yml):
+      entryPoints:
+        web:
+          address: ":80"
+          http:
+            redirections:
+              entryPoint:
+                to: websecure
+                scheme: https
+        websecure:
+          address: ":443"
+
+      providers:
+        file:
+          directory: /etc/traefik/dynamic
+          watch: true
+
+      certificatesResolvers:
+        letsencrypt:
+          acme:
+            email: admin@example.com
+            storage: /etc/traefik/acme.json
+            httpChallenge:
+              entryPoint: web
+
+      api:
+        dashboard: true
+
+    Example dynamic config (dynamic/routes.yml):
+      http:
+        routers:
+          app-router:
+            rule: "Host(`app.example.com`)"
+            entryPoints: ["websecure"]
+            service: app-service
+            tls:
+              certResolver: letsencrypt
+            middlewares: ["security-headers", "rate-limit"]
+
+        services:
+          app-service:
+            loadBalancer:
+              servers:
+                - url: "http://10.0.0.1:8080"
+                - url: "http://10.0.0.2:8080"
+              healthCheck:
+                path: /health
+                interval: "10s"
+                timeout: "3s"
+
+        middlewares:
+          security-headers:
+            headers:
+              stsSeconds: 31536000
+              stsIncludeSubdomains: true
+              frameDeny: true
+              contentTypeNosniff: true
+          rate-limit:
+            rateLimit:
+              average: 100
+              burst: 50
   bestPractices:
-    - Define entryPoints for HTTP and HTTPS with appropriate ports
-    - Configure automatic HTTPS with Let's Encrypt via certificatesResolvers
-    - Use middleware chains for authentication, rate limiting, and headers
-    - Enable access logging and metrics for observability
-    - Use Docker or Kubernetes provider for automatic service discovery
-    - Configure health checks for backend services
-    - Set timeouts for read, write, and idle connections
-    - Always redirect HTTP to HTTPS in production
-    - Use Let's Encrypt for automatic TLS certificates
-    - Do not expose the dashboard without authentication
-    - Set exposedByDefault to false for Docker provider
-    - Configure access logging for audit and debugging
+    - Define entryPoints for HTTP (port 80) and HTTPS (port 443) with HTTP-to-HTTPS redirection
+    - Configure automatic HTTPS with Let's Encrypt via certificatesResolvers using httpChallenge or tlsChallenge
+    - Use middleware chains for authentication, rate limiting, security headers, and request transformation
+    - Enable access logging with structured format for observability and debugging
+    - Set exposedByDefault to false for Docker provider to prevent unintended service exposure
+    - Never expose the Traefik dashboard without authentication middleware (basicAuth or forwardAuth)
+    - Configure health checks on loadBalancer services with path, interval, and timeout
+    - Use file provider with directory watching for dynamic configuration without restarts
+    - Set timeouts for read, write, and idle connections on entryPoints for resource management
+    - Always redirect HTTP to HTTPS in production via entryPoint HTTP redirections
+    - Use TLS options to enforce minimum TLS 1.2 with secure cipher suites
+    - Configure retry middleware with appropriate attempts for transient backend failures
+    - Use weighted round-robin or sticky sessions on loadBalancer services based on application needs
+    - Enable Prometheus metrics endpoint for monitoring Traefik performance and routing stats
+    - Use router priority to control rule matching order when rules overlap
   context7Libraries:
     - name: traefik
-      query: "Traefik v3 static configuration, entrypoints, routers, services, middleware, TLS"
+      query: "Traefik v3 static configuration entryPoints providers certificatesResolvers ACME Let's Encrypt, dynamic configuration http routers services middlewares, Docker labels provider exposedByDefault, Kubernetes IngressRoute CRD, file provider directory watch, middleware chains rateLimit basicAuth headers stripPrefix compress retry, TLS options certificates, loadBalancer health checks sticky sessions, tcp routers SNI, Prometheus metrics, accessLog format"
 
 files:
-  - path: "traefik.yml"
+  - path: "{outputPath}/traefik.yml"
     format: raw
+    conditional: true
+  - path: "{outputPath}/dynamic/routes.yml"
+    format: raw
+    conditional: true
+  - path: "{outputPath}/dynamic/middlewares.yml"
+    format: raw
+    conditional: true
+  - path: "{outputPath}/dynamic/tls.yml"
+    format: raw
+    conditional: true
+  - path: "{outputPath}/docker-compose.traefik.yml"
+    format: raw
+    conditional: true
 
 detection:
-  paths: ["traefik.yml", "traefik.yaml", "traefik.toml"]
+  paths: ["traefik.yml", "traefik.yaml", "traefik.toml", "dynamic/*.yml", "dynamic/*.yaml"]
   updateMode: true
 
 verification:
-  structural:
-    - path: "entryPoints"
-      required: true
-      message: "Missing required 'entryPoints' section"
+  binary:
+    command: "traefik validate --configFile {entryFile}"
+    parser: generic-stderr
+    timeout: 30000
+    cwd: output
 
 permissions:
   filesystem: write
-  child_process: none
+  child_process: required
   network: none
 
 scope:
-  write: ["traefik.yml", "traefik.yaml"]
+  write: ["traefik.yml", "traefik.yaml", "dynamic/*.yml", "dynamic/*.yaml", "docker-compose.traefik.yml"]
 
 risk:
   level: MEDIUM
-  rationale: "Reverse proxy changes affect traffic routing and TLS"
+  rationale: "Reverse proxy changes affect traffic routing, TLS termination, and service availability"
 
 execution:
   mode: generate
@@ -74,7 +180,7 @@ update:
 
 ## Prompt
 
-You are a Traefik expert specializing in reverse proxy and load balancer configuration.
+You are a Traefik expert specializing in reverse proxy configuration, load balancing, automatic TLS, and middleware pipelines for Traefik v3.
 
 {outputGuidance}
 
@@ -88,4 +194,5 @@ Project context: {projectContext}
 ## Keywords
 
 traefik, proxy, reverse-proxy, loadbalancer, ingress, tls, ssl,
-letsencrypt, middleware, router, service, docker, kubernetes
+letsencrypt, middleware, router, service, docker, kubernetes,
+entrypoint, acme, provider, dashboard, rate-limit, headers

@@ -8,7 +8,7 @@ meta:
   description: "Generate cert-manager Kubernetes TLS automation configurations"
   author: dojops
   license: MIT
-  tags: [tls, certificates, kubernetes, letsencrypt, security]
+  tags: [tls, certificates, kubernetes, letsencrypt, security, acme, x509, pki, ingress, encryption]
 
 context:
   technology: cert-manager
@@ -17,30 +17,114 @@ context:
     Generate valid cert-manager Kubernetes YAML manifests.
     Output raw YAML content directly — do NOT wrap in JSON or code fences.
     Use multi-document YAML (--- separator) when generating multiple resources.
-    The output must be valid Kubernetes YAML with cert-manager CRDs (Issuer, ClusterIssuer, Certificate).
+    The output must be valid Kubernetes YAML with cert-manager CRDs.
+
+    Detect the certificate scenario from context and generate appropriate resources:
+    - **ACME (Let's Encrypt)**: ClusterIssuer or Issuer with ACME server URL + solver config,
+      then Certificate resources referencing the issuer.
+      Use staging URL (https://acme-staging-v02.api.letsencrypt.org/directory) for testing,
+      production URL (https://acme-v02.api.letsencrypt.org/directory) for real certs.
+    - **CA-signed (internal PKI)**: Issuer with ca: secretName pointing to a CA keypair Secret,
+      then Certificate resources signed by the internal CA.
+    - **Self-signed (development)**: Issuer with selfSigned: {}, then Certificate resources.
+      Often used to bootstrap a CA (self-signed root → CA issuer → leaf certs).
+    - **Vault integration**: Issuer with vault: path/server/auth for HashiCorp Vault PKI backend.
+    - **Venafi integration**: Issuer with venafi: zone/cloud/tpp for enterprise certificate management.
+
+    ACME challenge solver types (choose based on use case):
+    - **HTTP01**: Uses ingress controller. Set solver.http01.ingress.class or ingressTemplate.
+      Works for single-domain and SAN certificates. Requires port 80 accessible.
+    - **DNS01**: Uses DNS provider API. Required for wildcard certificates.
+      Supported providers: cloudflare, route53, cloudDNS, azureDNS, digitalocean, akamai, rfc2136.
+      Requires provider credentials in a Secret referenced by the solver config.
+
+    Resource ordering in multi-document output:
+    1. Secret (if providing CA keypair or DNS credentials)
+    2. ClusterIssuer or Issuer
+    3. Certificate resources
+
+    Always include in every resource:
+    - apiVersion: cert-manager.io/v1
+    - Proper kind (Issuer, ClusterIssuer, or Certificate)
+    - metadata with name and namespace (except ClusterIssuer which is cluster-scoped)
+
+    Certificate resource must specify:
+    - secretName: name of the TLS Secret to create/manage
+    - issuerRef: name + kind (Issuer or ClusterIssuer)
+    - dnsNames or ipAddresses for the certificate subject
+    - duration and renewBefore for lifecycle management
+
+    Example ClusterIssuer + Certificate:
+    ```
+    apiVersion: cert-manager.io/v1
+    kind: ClusterIssuer
+    metadata:
+      name: letsencrypt-prod
+    spec:
+      acme:
+        server: https://acme-v02.api.letsencrypt.org/directory
+        email: admin@example.com
+        privateKeySecretRef:
+          name: letsencrypt-prod-account
+        solvers:
+          - http01:
+              ingress:
+                class: nginx
+    ---
+    apiVersion: cert-manager.io/v1
+    kind: Certificate
+    metadata:
+      name: example-tls
+      namespace: default
+    spec:
+      secretName: example-tls-secret
+      issuerRef:
+        name: letsencrypt-prod
+        kind: ClusterIssuer
+      dnsNames:
+        - example.com
+        - www.example.com
+      duration: 2160h
+      renewBefore: 360h
+    ```
   bestPractices:
-    - Use ClusterIssuer for cluster-wide certificate management
-    - Configure Let's Encrypt staging issuer for testing before production
-    - Set appropriate certificate duration and renewBefore periods
-    - Use DNS01 challenge for wildcard certificates
-    - Configure HTTP01 challenge with ingress class for standard certificates
-    - Include both RSA and ECDSA key algorithms based on compatibility needs
-    - Use Certificate resources with secretName for automatic TLS secret management
-    - Always specify apiVersion and kind for cert-manager CRDs
-    - Use Let's Encrypt staging for testing before switching to production
-    - Set renewBefore to at least 15 days before certificate expiry
-    - Use ECDSA keys for better performance unless RSA is required
-    - Include privateKeySecretRef for ACME account key storage
+    - Use ClusterIssuer for cluster-wide certificate management across namespaces
+    - Configure Let's Encrypt staging issuer for testing before switching to production
+    - Set certificate duration to 90 days (2160h) and renewBefore to at least 15 days (360h)
+    - Use DNS01 challenge solver for wildcard certificates (*.example.com)
+    - Configure HTTP01 challenge with correct ingress class for standard single-domain certificates
+    - Store ACME account key in privateKeySecretRef with a descriptive secret name
+    - Use ECDSA keys (algorithm: ECDSA, size: 256) for better performance unless RSA compatibility is required
+    - Specify explicit dnsNames or ipAddresses — avoid relying on commonName alone (deprecated in modern TLS)
+    - Use separate issuers per environment (staging vs production) to avoid rate limit issues
+    - Include usages field (digital signature, key encipherment, server auth) for explicit key usage
+    - Set revisionHistoryLimit on Certificate resources to control Secret version retention
+    - Use cert-manager annotations on Ingress resources for automatic certificate provisioning
+    - Reference DNS credential Secrets in the issuer spec — never embed credentials inline
+    - Use namespace-scoped Issuer when certificates are limited to a single namespace
   context7Libraries:
     - name: cert-manager
-      query: "cert-manager Issuer, ClusterIssuer, Certificate CRDs, ACME challenges, Let's Encrypt configuration"
+      query: "cert-manager CRD reference for Issuer ClusterIssuer Certificate, ACME HTTP01 DNS01 challenge solvers, Let's Encrypt configuration, self-signed and CA issuers, certificate duration renewBefore lifecycle, Vault and Venafi issuer integration"
 
 files:
-  - path: "cert-manager/issuer.yaml"
+  - path: "{outputPath}/clusterissuer.yaml"
     format: raw
+    conditional: true
+  - path: "{outputPath}/issuer.yaml"
+    format: raw
+    conditional: true
+  - path: "{outputPath}/certificate.yaml"
+    format: raw
+    conditional: true
+  - path: "{outputPath}/credentials-secret.yaml"
+    format: raw
+    conditional: true
+  - path: "{outputPath}/ca-secret.yaml"
+    format: raw
+    conditional: true
 
 detection:
-  paths: ["cert-manager/*.yaml", "cert-manager/*.yml"]
+  paths: ["cert-manager/*.yaml", "cert-manager/*.yml", "**/clusterissuer.yaml", "**/issuer.yaml", "**/certificate.yaml", "cert-manager.yaml"]
   updateMode: true
 
 verification:
@@ -51,14 +135,19 @@ verification:
     - path: "apiVersion"
       required: true
       message: "cert-manager resource must have an apiVersion"
+  binary:
+    command: "kubectl apply --dry-run=client -f {entryFile}"
+    parser: kubectl-stderr
+    timeout: 30000
+    cwd: output
 
 permissions:
   filesystem: write
-  child_process: none
+  child_process: required
   network: none
 
 scope:
-  write: ["cert-manager/*.yaml"]
+  write: ["cert-manager/*.yaml", "cert-manager/*.yml", "**/clusterissuer.yaml", "**/issuer.yaml", "**/certificate.yaml", "cert-manager.yaml"]
 
 risk:
   level: LOW
@@ -78,7 +167,7 @@ update:
 
 ## Prompt
 
-You are a Kubernetes TLS expert specializing in cert-manager certificate automation.
+You are a Kubernetes TLS expert specializing in cert-manager certificate automation and PKI architecture.
 
 {outputGuidance}
 
@@ -92,4 +181,5 @@ Project context: {projectContext}
 ## Keywords
 
 cert-manager, certificate, tls, ssl, letsencrypt, acme, issuer,
-cluster-issuer, kubernetes, ingress, https, pki, x509
+cluster-issuer, kubernetes, ingress, https, pki, x509, wildcard,
+dns01, http01, self-signed, ca-issuer, vault-pki, renewal

@@ -8,7 +8,7 @@ meta:
   description: "Generate OPA Rego admission and authorization policies"
   author: dojops
   license: MIT
-  tags: [policy, opa, rego, authorization, admission]
+  tags: [policy, opa, rego, authorization, admission, gatekeeper, kubernetes, rbac, compliance, governance]
 
 context:
   technology: Open Policy Agent
@@ -17,35 +17,141 @@ context:
     Generate valid OPA Rego policy files.
     Output raw Rego content directly — do NOT wrap in JSON or code fences.
     The output must be valid Rego that `opa check` can validate.
-    Use the Rego v1 syntax with proper package declarations and rules.
+
+    Detect the policy scenario from context and generate appropriate output:
+
+    1. **Standalone OPA policy** (default): Pure Rego files with package, imports, and rules.
+       Use deny/allow pattern with descriptive error messages.
+
+    2. **Gatekeeper ConstraintTemplate**: Kubernetes YAML wrapping Rego in a ConstraintTemplate CRD
+       plus a Constraint resource to apply it. Use multi-document YAML (--- separator).
+       ConstraintTemplate uses apiVersion: templates.gatekeeper.sh/v1 with Rego in spec.targets[].rego.
+
+    3. **Conftest policy**: Rego policies for configuration file validation (Dockerfile, Terraform, K8s YAML).
+       Package name should match conftest convention: package main or package dockerfile, etc.
+
+    Rego structure for standalone policies:
+    ```
+    package example.authz
+
+    import rego.v1
+
+    default allow := false
+
+    allow if {
+        input.user.role == "admin"
+    }
+
+    deny contains msg if {
+        not input.request.resource
+        msg := "request must specify a resource"
+    }
+    ```
+
+    Deny rule pattern — return set of violation messages:
+    ```
+    deny contains msg if {
+        some container in input.spec.containers
+        not container.resources.limits
+        msg := sprintf("container '%s' must set resource limits", [container.name])
+    }
+    ```
+
+    Gatekeeper ConstraintTemplate format:
+    ```
+    apiVersion: templates.gatekeeper.sh/v1
+    kind: ConstraintTemplate
+    metadata:
+      name: k8srequiredlabels
+    spec:
+      crd:
+        spec:
+          names:
+            kind: K8sRequiredLabels
+          validation:
+            openAPIV3Schema:
+              type: object
+              properties:
+                labels:
+                  type: array
+                  items:
+                    type: string
+      targets:
+        - target: admission.k8s.gatekeeper.sh
+          rego: |
+            package k8srequiredlabels
+            violation[{"msg": msg}] {
+              missing := {label | label := input.parameters.labels[_]; not input.review.object.metadata.labels[label]}
+              count(missing) > 0
+              msg := sprintf("missing required labels: %v", [missing])
+            }
+    ---
+    apiVersion: constraints.gatekeeper.sh/v1beta1
+    kind: K8sRequiredLabels
+    metadata:
+      name: require-team-label
+    spec:
+      match:
+        kinds:
+          - apiGroups: [""]
+            kinds: ["Namespace"]
+      parameters:
+        labels: ["team"]
+    ```
+
+    For test files (_test.rego):
+    - Use package matching the policy package with _test suffix
+    - Include test_ prefixed rules with mock input data
+    - Test both positive (allowed) and negative (denied) cases
+
+    Always include:
+    - Package declaration matching the policy domain
+    - import rego.v1 for modern syntax (if/contains keywords)
+    - Comments explaining the policy intent and compliance requirement
+    - Default values for allow/deny rules
   bestPractices:
-    - Define a clear package hierarchy matching your policy domain
-    - Use deny rules with descriptive error messages
-    - Write helper rules for reusable policy logic
-    - Include default deny with explicit allow rules (deny-by-default)
+    - Define a clear package hierarchy matching your policy domain (e.g., package kubernetes.admission)
+    - Use deny rules that return descriptive error messages with sprintf for context
+    - Write helper rules for reusable policy logic to keep deny rules readable
+    - Use deny-by-default pattern: default allow := false with explicit allow conditions
     - Add metadata annotations for documentation and IDE support
-    - Test policies with input mocking and opa test
-    - Use comprehensions and built-in functions for complex logic
-    - Always declare a package for policy organization
-    - Use deny rules that return descriptive error messages
-    - Import rego.v1 for modern Rego syntax
+    - Write companion _test.rego files with input mocking for every policy
+    - Use comprehensions and built-in functions (count, sprintf, regex.match) for complex logic
+    - Import rego.v1 for modern syntax (if/contains/every keywords)
     - Write rules that check specific fields, not broad object matches
-    - Include comments explaining the policy intent
+    - Include comments explaining the compliance requirement each rule enforces
+    - Use data.* references for external data (RBAC bindings, allowed registries) rather than hardcoding
+    - For Gatekeeper policies, define parameterized ConstraintTemplates for reusability
+    - Separate concerns into multiple packages (admission, authz, compliance) rather than monolithic files
+    - Use every keyword for universal quantification instead of negated existentials
   context7Libraries:
     - name: opa
-      query: "OPA Rego policy syntax, rules, packages, deny patterns, Kubernetes admission control"
+      query: "OPA Rego v1 policy syntax with package imports deny allow rules, Kubernetes admission control Gatekeeper ConstraintTemplate and Constraint CRDs, built-in functions sprintf regex count, testing with mock input, Conftest policy patterns for Dockerfile Terraform validation"
 
 files:
-  - path: "policy.rego"
+  - path: "{outputPath}/policy.rego"
     format: raw
+    conditional: true
+  - path: "{outputPath}/policy_test.rego"
+    format: raw
+    conditional: true
+  - path: "{outputPath}/data.json"
+    format: raw
+    conditional: true
+  - path: "{outputPath}/constraint-template.yaml"
+    format: raw
+    conditional: true
+  - path: "{outputPath}/constraint.yaml"
+    format: raw
+    conditional: true
 
 detection:
-  paths: ["*.rego", "policies/*.rego"]
+  paths: ["*.rego", "policies/*.rego", "policy/*.rego", "opa/*.rego", "gatekeeper/*.yaml", "constraints/*.yaml"]
   updateMode: true
 
 verification:
   binary:
-    command: "opa check policy.rego"
+    command: "opa check {entryFile}"
     parser: generic-stderr
     timeout: 30000
     cwd: output
@@ -56,7 +162,7 @@ permissions:
   network: none
 
 scope:
-  write: ["*.rego", "policies/*.rego"]
+  write: ["*.rego", "policies/*.rego", "policy/*.rego", "opa/*.rego", "gatekeeper/*.yaml", "constraints/*.yaml", "*.json"]
 
 risk:
   level: LOW
@@ -76,7 +182,7 @@ update:
 
 ## Prompt
 
-You are an Open Policy Agent expert specializing in Rego policy authoring for Kubernetes admission control and authorization.
+You are an Open Policy Agent expert specializing in Rego policy authoring for Kubernetes admission control, authorization, and configuration validation.
 
 {outputGuidance}
 
@@ -90,4 +196,6 @@ Project context: {projectContext}
 ## Keywords
 
 opa, rego, policy, admission, authorization, open-policy-agent,
-gatekeeper, kubernetes, rbac, compliance, governance
+gatekeeper, kubernetes, rbac, compliance, governance, constraint,
+conftest, deny, allow, violation, audit, enforcement, bundle,
+decision-log

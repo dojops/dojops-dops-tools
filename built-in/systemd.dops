@@ -51,7 +51,7 @@ detection:
 
 verification:
   binary:
-    command: "systemd-analyze verify service.service"
+    command: "systemd-analyze verify {entryFile}"
     parser: systemd-analyze
     timeout: 30000
     cwd: output

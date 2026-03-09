@@ -5,10 +5,10 @@ kind: tool
 meta:
   name: caddy
   version: 2.1.0
-  description: "Generate Caddy web server Caddyfile configurations"
+  description: "Generate Caddy web server Caddyfile and JSON configurations"
   author: dojops
   license: MIT
-  tags: [webserver, caddy, proxy, tls, http]
+  tags: [webserver, caddy, proxy, tls, http, reverse-proxy, automatic-https, letsencrypt]
 
 context:
   technology: Caddy
@@ -17,35 +17,76 @@ context:
     Generate a complete, valid Caddyfile configuration.
     Output raw Caddyfile content directly — do NOT wrap in JSON or code fences.
     The output must be a valid Caddyfile that `caddy validate` accepts.
-    Use the Caddyfile format (not JSON config).
+    Use the Caddyfile format (not JSON config) unless the user explicitly requests JSON.
+
+    Detect the use case from context and generate appropriately:
+    - **Static site**: file_server, root directive, try_files for SPA fallback, encode gzip zstd
+    - **Reverse proxy**: reverse_proxy directive with upstream addresses, health checks, load balancing
+    - **Multi-site**: Multiple site blocks with distinct domain names, each with own directives
+    - **API gateway**: handle_path blocks for path-based routing to multiple backends, CORS headers
+    - **SSL/TLS termination**: Automatic HTTPS with domain names, or manual tls directive with cert paths
+    - **WebSocket proxy**: reverse_proxy with flush_interval -1, transparent proxying
+    - **Load balancer**: reverse_proxy with multiple upstreams, lb_policy (round_robin, least_conn, ip_hash, random)
+
+    Caddyfile structure rules:
+    - Each site block starts with an address (domain, :port, or wildcard) followed by curly braces
+    - Global options block (if needed) must appear FIRST, enclosed in bare `{ }` with no address
+    - Directives are ordered by Caddy's directive order (tls, encode, handle, reverse_proxy, file_server, etc.)
+    - Use handle and handle_path for mutually exclusive path routing (handle_path strips prefix)
+    - Matchers use @name syntax for named matchers or inline path matching
+
+    Example site block:
+      example.com {
+          encode gzip zstd
+          handle /api/* {
+              reverse_proxy localhost:8080
+          }
+          handle {
+              root * /srv/www
+              file_server
+          }
+      }
   bestPractices:
-    - Leverage automatic HTTPS — Caddy provisions TLS by default
-    - Use reverse_proxy directive for backend service proxying
-    - Enable gzip/zstd encoding for response compression
-    - Set appropriate headers for security (HSTS, CSP, X-Frame-Options)
-    - Use file_server for static file serving with browse disabled
-    - Configure log output for access and error logging
-    - Use handle and handle_path for clean URL routing
-    - Use domain names for automatic HTTPS, not localhost in production
-    - Include security headers for all public-facing sites
-    - Enable response compression for text-based content
-    - Configure health checks for reverse proxy backends
-    - Use handle blocks for clean URL path routing
+    - Leverage automatic HTTPS — Caddy provisions and renews TLS certificates by default for public domains
+    - Use reverse_proxy directive with health_uri, health_interval, and health_timeout for backend monitoring
+    - Enable encode gzip zstd for response compression on text-based content
+    - Set security headers via header directive (Strict-Transport-Security, X-Frame-Options, X-Content-Type-Options, Referrer-Policy, Content-Security-Policy)
+    - Use file_server with browse disabled unless directory listing is explicitly needed
+    - Configure log output for structured access logging (log { output file, format json })
+    - Use handle and handle_path for clean mutually exclusive URL path routing
+    - Use domain names (not localhost) in production for automatic HTTPS provisioning
+    - Configure lb_policy on reverse_proxy with multiple upstreams (round_robin, least_conn, ip_hash)
+    - Use import directive to reuse common snippet blocks across site definitions
+    - Set header_up and header_down on reverse_proxy for proper request/response header manipulation
+    - Use respond directive for health check endpoints and static responses
+    - Configure request matchers (@name) for conditional directive application
+    - Use tls directive with on-demand TLS or custom certificate paths when automatic HTTPS is not suitable
+    - Set request_body max_size to prevent oversized uploads
   context7Libraries:
     - name: caddy
-      query: "Caddyfile syntax, reverse_proxy, file_server, TLS, headers, encode, handle directives"
+      query: "Caddyfile syntax site blocks directives ordering, reverse_proxy health checks load balancing lb_policy, file_server root try_files, encode gzip zstd, tls automatic HTTPS certificates, handle handle_path matchers, header security headers, log structured logging, import snippets, respond directive"
 
 files:
-  - path: "Caddyfile"
+  - path: "{outputPath}/Caddyfile"
     format: raw
+    conditional: true
+  - path: "{outputPath}/caddy.json"
+    format: raw
+    conditional: true
+  - path: "{outputPath}/Caddyfile.dev"
+    format: raw
+    conditional: true
+  - path: "{outputPath}/Caddyfile.prod"
+    format: raw
+    conditional: true
 
 detection:
-  paths: ["Caddyfile"]
+  paths: ["Caddyfile", "Caddyfile.*", "caddy.json"]
   updateMode: true
 
 verification:
   binary:
-    command: "caddy validate --config Caddyfile"
+    command: "caddy validate --config {entryFile}"
     parser: generic-stderr
     timeout: 30000
     cwd: output
@@ -56,11 +97,11 @@ permissions:
   network: none
 
 scope:
-  write: ["Caddyfile"]
+  write: ["Caddyfile", "Caddyfile.*", "caddy.json"]
 
 risk:
   level: MEDIUM
-  rationale: "Web server changes affect traffic routing and TLS"
+  rationale: "Web server changes affect traffic routing and TLS certificate provisioning"
 
 execution:
   mode: generate
@@ -76,7 +117,7 @@ update:
 
 ## Prompt
 
-You are a Caddy web server expert specializing in Caddyfile configurations.
+You are a Caddy web server expert specializing in Caddyfile configurations, automatic HTTPS, reverse proxying, and load balancing.
 
 {outputGuidance}
 
@@ -90,4 +131,5 @@ Project context: {projectContext}
 ## Keywords
 
 caddy, caddyfile, webserver, reverse-proxy, tls, https, http,
-file-server, proxy, automatic-https, letsencrypt
+file-server, proxy, automatic-https, letsencrypt, load-balancer,
+encode, gzip, handle, matcher, snippet, websocket

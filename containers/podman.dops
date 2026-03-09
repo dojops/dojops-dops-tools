@@ -5,45 +5,133 @@ kind: tool
 meta:
   name: podman
   version: 2.1.0
-  description: "Generate Podman pod and container YAML configurations"
+  description: "Generate Podman pod YAML, Quadlet unit files, and podman-compose configurations"
   author: dojops
   license: MIT
-  tags: [container, podman, pod, rootless, oci]
+  tags: [container, podman, pod, rootless, oci, quadlet, systemd, daemonless]
 
 context:
   technology: Podman
   fileFormat: raw
   outputGuidance: |
-    Generate valid Podman Kubernetes-compatible YAML for pods and containers.
-    Output raw YAML content directly — do NOT wrap in JSON or code fences.
-    The output must be compatible with `podman play kube`.
-    Use Kubernetes Pod spec format that Podman understands.
+    Generate valid Podman configuration files.
+    Output raw content directly — do NOT wrap in JSON or code fences.
+
+    Detect the output format from context and generate appropriately:
+
+    1. **Kubernetes Pod YAML** (default): Kubernetes-compatible YAML for `podman play kube`.
+       Use apiVersion: v1, kind: Pod (or Deployment). Include containers, volumes, ports at pod level.
+       The output must be compatible with `podman play kube --dry-run`.
+
+    2. **Quadlet unit files** (.container, .pod, .kube, .network, .volume): Systemd-native Podman integration.
+       Each Quadlet file is an INI-format systemd unit with Podman-specific sections:
+       - **.container**: [Container] section with Image, PublishPort, Volume, Environment, HealthCmd
+       - **.pod**: [Pod] section with PodName, PublishPort, defining a pod for grouped containers
+       - **.kube**: [Kube] section with Yaml (path to K8s YAML), PublishPort for kube play integration
+       - **.network**: [Network] section with Subnet, Gateway, Driver for custom networks
+       - **.volume**: [Volume] section with Driver, Options for named volumes
+
+    3. **podman-compose**: Docker Compose-compatible YAML using podman-compose.
+       Same format as docker-compose.yml but executed by podman-compose.
+       Include services, networks, volumes with Podman-compatible options.
+
+    Detect the deployment scenario from context:
+    - **Single container**: Quadlet .container file or simple Pod YAML
+    - **Multi-container pod**: Pod YAML with multiple containers sharing network namespace, or .pod + .container Quadlets
+    - **Systemd-managed services**: Quadlet files installed to ~/.config/containers/systemd/ (rootless) or /etc/containers/systemd/ (root)
+    - **Development stack**: podman-compose.yml with build contexts and volume mounts
+    - **Production deployment**: Pod YAML with resource limits, security contexts, health checks
+
+    Example Pod YAML:
+      apiVersion: v1
+      kind: Pod
+      metadata:
+        name: webapp
+        labels:
+          app: webapp
+      spec:
+        containers:
+          - name: app
+            image: docker.io/library/nginx:1.25
+            ports:
+              - containerPort: 80
+                hostPort: 8080
+            volumeMounts:
+              - name: html
+                mountPath: /usr/share/nginx/html
+            resources:
+              limits:
+                memory: "256Mi"
+                cpu: "500m"
+        volumes:
+          - name: html
+            hostPath:
+              path: ./html
+
+    Example Quadlet .container file:
+      [Unit]
+      Description=Web application container
+      After=network-online.target
+
+      [Container]
+      Image=docker.io/library/nginx:1.25
+      PublishPort=8080:80
+      Volume=html.volume:/usr/share/nginx/html:ro
+      HealthCmd=curl -f http://localhost/ || exit 1
+      HealthInterval=30s
+
+      [Install]
+      WantedBy=default.target
   bestPractices:
-    - Use rootless containers when possible for security
-    - Define resource limits for CPU and memory
-    - Use named volumes for persistent data
-    - Set security contexts with read-only root filesystem
-    - Use pod-level networking for multi-container communication
-    - Map ports explicitly at the pod level
-    - Use environment variables from secrets or configmaps
-    - Use fully qualified image names with registry prefix
-    - Set security contexts for least-privilege execution
-    - Ports must be mapped at the pod level for external access
+    - Use rootless containers by default for defense-in-depth security (no daemon, no root required)
+    - Define resource limits (memory, cpu) in Pod YAML spec.containers[].resources
+    - Use named volumes for persistent data instead of bind mounts in production
+    - Set security contexts with readOnlyRootFilesystem, runAsNonRoot, and drop ALL capabilities
+    - Map ports at the pod level (hostPort on pod spec) for external access to multi-container pods
+    - Use fully qualified image names with registry prefix (docker.io/library/nginx:1.25)
+    - Pin image versions to specific tags or SHA256 digests for reproducibility
+    - Use Quadlet files for systemd-managed production deployments with auto-restart and dependency ordering
+    - Configure health checks (HealthCmd in Quadlet, or livenessProbe/readinessProbe in Pod YAML)
+    - Use environment variables from secrets or configmaps, never hardcode sensitive values
+    - Use pod-level networking for containers that need to communicate via localhost
+    - Set AutoUpdate=registry on Quadlet containers for automatic image update detection
+    - Use .network Quadlet files for custom network configurations with defined subnets
+    - Configure Quadlet [Service] section with Restart=on-failure and TimeoutStopSec for reliability
+    - Use --userns=keep-id for rootless containers that need host UID mapping
   context7Libraries:
     - name: podman
-      query: "Podman play kube, pod YAML, container configuration, rootless containers"
+      query: "Podman play kube Pod YAML specification containers volumes ports, Quadlet systemd unit files .container .pod .kube .network .volume sections, podman-compose docker-compose compatibility, rootless containers security contexts, health checks HealthCmd livenessProbe, resource limits memory cpu, named volumes, AutoUpdate registry, userns keep-id UID mapping"
 
 files:
-  - path: "podman.yaml"
+  - path: "{outputPath}/pod.yaml"
     format: raw
+    conditional: true
+  - path: "{outputPath}/podman-compose.yml"
+    format: raw
+    conditional: true
+  - path: "{outputPath}/app.container"
+    format: raw
+    conditional: true
+  - path: "{outputPath}/app.pod"
+    format: raw
+    conditional: true
+  - path: "{outputPath}/app.kube"
+    format: raw
+    conditional: true
+  - path: "{outputPath}/app.network"
+    format: raw
+    conditional: true
+  - path: "{outputPath}/app.volume"
+    format: raw
+    conditional: true
 
 detection:
-  paths: ["podman.yaml", "*.kube"]
+  paths: ["podman.yaml", "pod.yaml", "*.kube", "*.container", "*.pod", "podman-compose.yml", "podman-compose.yaml"]
   updateMode: true
 
 verification:
   binary:
-    command: "podman play kube --dry-run podman.yaml"
+    command: "podman play kube --dry-run {entryFile}"
     parser: generic-stderr
     timeout: 30000
     cwd: output
@@ -54,11 +142,11 @@ permissions:
   network: none
 
 scope:
-  write: ["podman.yaml", "*.kube"]
+  write: ["*.yaml", "*.yml", "*.kube", "*.container", "*.pod", "*.network", "*.volume"]
 
 risk:
   level: MEDIUM
-  rationale: "Container configurations affect running workloads"
+  rationale: "Container configurations affect running workloads and host system integration"
 
 execution:
   mode: generate
@@ -74,7 +162,7 @@ update:
 
 ## Prompt
 
-You are a container expert specializing in Podman pod and container configurations.
+You are a container expert specializing in Podman pod configurations, Quadlet systemd integration, and rootless container deployments.
 
 {outputGuidance}
 
@@ -88,4 +176,5 @@ Project context: {projectContext}
 ## Keywords
 
 podman, pod, container, rootless, kube, oci, cri-o,
-daemonless, systemd, quadlet
+daemonless, systemd, quadlet, podman-compose, play-kube,
+security-context, volumes, health-check, auto-update, userns

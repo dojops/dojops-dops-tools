@@ -55,7 +55,7 @@ detection:
 
 verification:
   binary:
-    command: "nginx -t -c nginx.conf"
+    command: "nginx -t -c {entryFile}"
     parser: nginx-stderr
     timeout: 30000
     cwd: output

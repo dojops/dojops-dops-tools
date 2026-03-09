@@ -5,48 +5,182 @@ kind: tool
 meta:
   name: jaeger
   version: 2.1.0
-  description: "Generate Jaeger distributed tracing configurations"
+  description: "Generate Jaeger distributed tracing configurations, sampling strategies, and OTEL Collector pipelines"
   author: dojops
   license: MIT
-  tags: [tracing, jaeger, observability, distributed, opentelemetry]
+  tags: [tracing, jaeger, observability, distributed, opentelemetry, sampling, collector, spans, apm]
 
 context:
   technology: Jaeger
-  fileFormat: yaml
+  fileFormat: json
   outputGuidance: |
-    Generate a valid Jaeger configuration in YAML format.
-    Output raw YAML content directly — do NOT wrap in JSON or code fences.
-    The output must be a valid Jaeger collector/query configuration file.
+    Generate Jaeger configuration files as a JSON object with file paths as keys and file contents as string values.
+    Format: { "files": { "jaeger-config.yaml": "content...", "sampling-strategies.json": "content..." } }
+    At least one file key is required. Files are optional based on the request:
+      - jaeger-config.yaml — Jaeger all-in-one or component configuration (collector, query, agent)
+      - otel-collector-config.yaml — OpenTelemetry Collector configuration with Jaeger receiver/exporter (Jaeger v2 approach)
+      - sampling-strategies.json — Sampling strategy definitions (probabilistic, rate-limiting, adaptive, per-operation)
+      - storage-config.yaml — Storage backend configuration (Elasticsearch, Cassandra, Kafka, Badger)
+    YAML files must be valid configuration for their respective component. JSON files must be valid JSON.
+    Do NOT output raw YAML or JSON — use the JSON wrapper to enable multi-file output.
+
+    === JAEGER ALL-IN-ONE / COMPONENT CONFIG (jaeger-config.yaml) ===
+    For Jaeger v1 (standalone binary), environment-variable-based or YAML config:
+      collector:
+        queue-size: 2000
+        num-workers: 50
+        grpc-server:
+          host-port: ":14250"
+        http-server:
+          host-port: ":14268"
+        otlp:
+          enabled: true
+          grpc:
+            host-port: ":4317"
+          http:
+            host-port: ":4318"
+      query:
+        base-path: /
+        grpc:
+          host-port: ":16685"
+        http:
+          host-port: ":16686"
+      storage:
+        type: elasticsearch
+        elasticsearch:
+          server-urls: http://elasticsearch:9200
+          index-prefix: jaeger
+          tags-as-fields:
+            all: true
+
+    === OTEL COLLECTOR CONFIG (otel-collector-config.yaml) — Jaeger v2 ===
+    Jaeger v2 is built on the OpenTelemetry Collector framework:
+      receivers:
+        otlp:
+          protocols:
+            grpc:
+              endpoint: 0.0.0.0:4317
+            http:
+              endpoint: 0.0.0.0:4318
+        jaeger:
+          protocols:
+            grpc:
+              endpoint: 0.0.0.0:14250
+            thrift_http:
+              endpoint: 0.0.0.0:14268
+      processors:
+        batch:
+          timeout: 5s
+          send_batch_size: 10000
+        memory_limiter:
+          limit_mib: 512
+          spike_limit_mib: 128
+          check_interval: 5s
+      exporters:
+        jaeger_storage_exporter:
+          trace_storage: es-main
+      extensions:
+        jaeger_storage:
+          backends:
+            es-main:
+              elasticsearch:
+                server_urls: [http://elasticsearch:9200]
+                index_prefix: jaeger
+        jaeger_query:
+          trace_storage: es-main
+          http:
+            endpoint: 0.0.0.0:16686
+          grpc:
+            endpoint: 0.0.0.0:16685
+      service:
+        extensions: [jaeger_storage, jaeger_query]
+        pipelines:
+          traces:
+            receivers: [otlp, jaeger]
+            processors: [memory_limiter, batch]
+            exporters: [jaeger_storage_exporter]
+
+    === SAMPLING STRATEGIES (sampling-strategies.json) ===
+    Structure:
+      {
+        "service_strategies": [
+          {
+            "service": "my-service",
+            "type": "probabilistic",
+            "param": 0.5,
+            "operation_strategies": [
+              { "operation": "health-check", "type": "probabilistic", "param": 0.0 },
+              { "operation": "/api/critical", "type": "probabilistic", "param": 1.0 }
+            ]
+          }
+        ],
+        "default_strategy": {
+          "type": "probabilistic",
+          "param": 0.1
+        }
+      }
+    Sampling types:
+      - probabilistic — Sample a fraction of traces (param: 0.0-1.0)
+      - ratelimiting — Fixed traces per second (param: number of traces)
+      - const — Sample all (param: 1) or none (param: 0)
+
+    === STORAGE BACKENDS ===
+    - Elasticsearch — Production recommended, index_prefix, num_shards, num_replicas, max_span_age
+    - Cassandra — keyspace, servers, replication_factor, consistency
+    - Kafka — topic, encoding (protobuf/json), brokers (for buffering between collector and storage)
+    - Badger — Embedded KV store for all-in-one deployments (directories.keys, directories.values)
+
+    Detect deployment model from context:
+    - **All-in-one**: Single binary for development/testing, memory or Badger storage
+    - **Production distributed**: Separate collector, query, ingester components with Elasticsearch/Cassandra
+    - **Kafka buffered**: Collector → Kafka → Ingester → Storage for high-throughput production
+    - **OTEL Collector (v2)**: OpenTelemetry Collector with Jaeger extensions for modern deployments
+    - **Kubernetes**: Jaeger Operator CRDs, sidecar injection, auto-provisioning
   bestPractices:
-    - Configure appropriate sampling strategies (probabilistic, rate-limiting, adaptive)
-    - Use Elasticsearch or Cassandra for production storage backends
-    - Set span storage TTL for automatic data expiration
-    - Enable OTLP receiver for OpenTelemetry compatibility
-    - Configure query service with appropriate max_clock_skew_adjustment
-    - Use TLS for collector endpoints in production
-    - Set appropriate queue sizes and worker counts for collector throughput
-    - Use OTLP receivers for OpenTelemetry compatibility
-    - Configure appropriate batch processor settings for throughput
-    - Set index prefix for Elasticsearch to avoid conflicts
-    - Enable health check endpoints for liveness probes
-    - Use production-grade storage backends, not in-memory
+    - Configure per-service sampling strategies — avoid using one rate for all services
+    - Use probabilistic sampling for high-throughput services and rate-limiting for low-traffic ones
+    - Set sampling rate to 0.0 for health-check and readiness probe operations to reduce noise
+    - Use Elasticsearch or Cassandra for production storage backends — never use in-memory for production
+    - Enable OTLP receiver (gRPC :4317, HTTP :4318) for OpenTelemetry SDK compatibility
+    - Configure batch processor with appropriate timeout and send_batch_size for collector throughput
+    - Set memory_limiter processor to prevent OOM in high-throughput environments
+    - Use TLS for collector endpoints in production (grpc.tls, http.tls)
+    - Set span storage TTL (max_span_age) for automatic data expiration and storage management
+    - Configure index_prefix for Elasticsearch to avoid index name conflicts with other applications
+    - Enable health check endpoints (:13133) for Kubernetes liveness and readiness probes
+    - Use Kafka as intermediate buffer between collector and storage for high-availability ingestion
+    - Set appropriate queue sizes and num_workers for collector based on expected trace volume
+    - Configure tags-as-fields for Elasticsearch to enable efficient tag-based searching
   context7Libraries:
     - name: jaeger
-      query: "Jaeger configuration, collector, query, sampling strategies, storage backends, OTLP"
+      query: "Jaeger configuration collector query agent, sampling strategies probabilistic ratelimiting per-operation per-service, Elasticsearch Cassandra Kafka storage backends, OpenTelemetry Collector Jaeger v2 receivers processors exporters extensions, OTLP gRPC HTTP endpoints, Jaeger Operator Kubernetes deployment, batch processor memory_limiter, trace storage TTL index management"
 
 files:
-  - path: "jaeger-config.yaml"
+  - path: "{outputPath}/jaeger-config.yaml"
     format: raw
+    conditional: true
+  - path: "{outputPath}/otel-collector-config.yaml"
+    format: raw
+    conditional: true
+  - path: "{outputPath}/sampling-strategies.json"
+    format: raw
+    conditional: true
+  - path: "{outputPath}/storage-config.yaml"
+    format: raw
+    conditional: true
 
 detection:
-  paths: ["jaeger-config.yaml", "jaeger.yaml"]
+  paths: ["jaeger-config.yaml", "jaeger.yaml", "jaeger.yml", "otel-collector-config.yaml", "otel-collector.yaml", "sampling-strategies.json", "*/jaeger*.yaml"]
   updateMode: true
 
 verification:
   structural:
-    - path: "service_name"
+    - path: "service"
       required: false
-      message: "General YAML validity check"
+      message: "OTEL Collector config should have a 'service' section defining pipelines"
+    - path: "default_strategy"
+      required: false
+      message: "Sampling config should have a 'default_strategy' section"
 
 permissions:
   filesystem: write
@@ -54,11 +188,11 @@ permissions:
   network: none
 
 scope:
-  write: ["jaeger-config.yaml", "jaeger.yaml"]
+  write: ["jaeger-config.yaml", "jaeger.yaml", "jaeger.yml", "otel-collector-config.yaml", "otel-collector.yaml", "sampling-strategies.json", "storage-config.yaml", "**/*.yaml", "**/*.json"]
 
 risk:
   level: LOW
-  rationale: "Tracing config changes require service restart to take effect"
+  rationale: "Tracing config changes require service restart to take effect and do not affect application logic"
 
 execution:
   mode: generate
@@ -74,7 +208,7 @@ update:
 
 ## Prompt
 
-You are a distributed tracing expert specializing in Jaeger configuration and deployment.
+You are a distributed tracing expert specializing in Jaeger configuration, OpenTelemetry Collector pipelines, sampling strategies, and storage backend setup.
 
 {outputGuidance}
 
@@ -88,4 +222,6 @@ Project context: {projectContext}
 ## Keywords
 
 jaeger, tracing, distributed-tracing, opentelemetry, otlp, spans,
-traces, sampling, collector, query, observability, apm
+traces, sampling, collector, query, observability, apm, otel,
+elasticsearch, cassandra, kafka, probabilistic, ratelimiting,
+ingester, storage-backend, batch-processor
