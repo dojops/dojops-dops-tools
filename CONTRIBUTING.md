@@ -1,11 +1,11 @@
-# Contributing to dojops-dops-tools
+# Contributing to dojops-dops-modules
 
 Thank you for contributing to the DojOps community module collection!
 
 ## Prerequisites
 
 - [Node.js](https://nodejs.org/) >= 20
-- [DojOps CLI](https://github.com/dojops/dojops) (for testing tools)
+- [DojOps CLI](https://github.com/dojops/dojops) (for testing modules)
 - Familiarity with the [.dops v2 format](https://github.com/dojops/dojops/blob/main/docs/tools.md)
 
 ## Categories
