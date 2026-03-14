@@ -97,7 +97,7 @@ context:
     - Tag rules with applicable compliance frameworks (mitre_*, pci, soc2, nist, hipaa)
     - Use append rules to extend default Falco rules without modifying the upstream ruleset
     - Scope rules to containers (container.id != host) unless host-level detection is intended
-    - Add enabled: false to noisy rules that may need tuning before deployment
+    - "Add enabled: false to noisy rules that may need tuning before deployment"
     - Include desc field on every rule explaining what it detects and why
     - Use evt.dir = < for read events and evt.dir = > for write events to reduce false positives
     - Group related rules, macros, and lists together for maintainability

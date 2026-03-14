@@ -102,7 +102,7 @@ context:
     - Include at least one backup decryption key (age or PGP) alongside cloud KMS
     - Never include actual secret values in the .sops.yaml configuration file
     - Use path_regex patterns matching your directory structure (environments/prod/, environments/staging/)
-    - Configure encrypted_suffix: _secret as an alternative to encrypted_regex for simpler key naming
+    - "Configure encrypted_suffix: _secret as an alternative to encrypted_regex for simpler key naming"
     - Pin SOPS version in CI/CD to ensure consistent encryption behavior across environments
     - Use separate KMS keys per environment to enforce access isolation
     - Store age private keys outside the repository (SOPS_AGE_KEY_FILE environment variable)

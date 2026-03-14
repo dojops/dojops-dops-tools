@@ -138,7 +138,7 @@ context:
     - Use appropriate panel units (reqps, bytes, percent, short, s, ms) for meaningful axis labels
     - Set legendFormat with template labels ({{instance}}, {{pod}}) for readable legends
     - Use annotations to mark deployments, incidents, and events on time-series panels
-    - Configure datasource provisioning with access: proxy to route queries through Grafana server
+    - "Configure datasource provisioning with access: proxy to route queries through Grafana server"
     - Use dashboard providers to auto-load dashboards from filesystem for GitOps workflows
     - Create alert rules with appropriate for duration (5m minimum) to avoid flapping
   context7Libraries:

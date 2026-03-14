@@ -84,7 +84,7 @@ context:
     - Use Pulumi.dev.yaml / Pulumi.prod.yaml for environment-specific configuration values
     - Import only the required provider packages to minimize dependencies and build time
     - Use explicit resource options (dependsOn, protect, ignoreChanges) for controlling resource lifecycle
-    - Enable strict TypeScript compiler options (strict: true, noImplicitReturns) in tsconfig.json
+    - "Enable strict TypeScript compiler options (strict: true, noImplicitReturns) in tsconfig.json"
     - Use pulumi.secret() for sensitive config values that must be encrypted in state
     - Name resources descriptively using the first constructor argument — names appear in the Pulumi dashboard
   context7Libraries:

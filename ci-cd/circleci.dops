@@ -128,7 +128,7 @@ context:
     - Store test results with store_test_results for CircleCI insights and intelligent test splitting
     - Define reusable executors for consistent Docker images and environment across jobs
     - Use reusable commands for shared step sequences to reduce duplication across jobs
-    - Use approval jobs (type: approval) as manual gates before production deployments
+    - "Use approval jobs (type: approval) as manual gates before production deployments"
     - Use matrix jobs with parameters for multi-version or multi-platform testing
     - Use orbs for common integrations (node, python, docker, aws-cli) instead of custom scripts
     - Set no_output_timeout for long-running steps that produce no output to prevent premature kills

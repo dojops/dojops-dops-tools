@@ -113,7 +113,7 @@ context:
     - Define a clear package hierarchy matching your policy domain (e.g., package kubernetes.admission)
     - Use deny rules that return descriptive error messages with sprintf for context
     - Write helper rules for reusable policy logic to keep deny rules readable
-    - Use deny-by-default pattern: default allow := false with explicit allow conditions
+    - "Use deny-by-default pattern: default allow := false with explicit allow conditions"
     - Add metadata annotations for documentation and IDE support
     - Write companion _test.rego files with input mocking for every policy
     - Use comprehensions and built-in functions (count, sprintf, regex.match) for complex logic
